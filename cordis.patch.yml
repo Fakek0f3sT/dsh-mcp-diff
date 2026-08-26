@@ -1,0 +1,6 @@
+# Bundle patch for profile-bundle installation: inserts the plugin row into the
+# composition (id + bare package name). No config block — the plugin has no
+# config schema. Mirrors the registration documented in README.md § Установка.
+- insert:
+    - id: mcp-diff
+      name: dsh-mcp-diff
