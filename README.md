@@ -7,6 +7,8 @@ per-line highlighting (green for additions, red for deletions).
 Covers both the `filesystem` MCP server (`edit_file` / `write_file`) and the
 built-in DSH tools (`edit` / `write`), bringing them to one look.
 
+![A diff card rendered by dsh-mcp-diff in the DeepSeek Harness web chat](docs/screenshot.png)
+
 ## Why
 
 By default DSH draws a diff only for its own file tools (`edit`, `write`), with
