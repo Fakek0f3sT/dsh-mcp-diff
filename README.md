@@ -25,24 +25,35 @@
 - рисует всё одной карточкой на нативном `<details>` — **свёрнута по
   умолчанию**, в шапке путь + `+N -M`, разворачивается по клику.
 
-## Установка (из git)
-
-Пакет пока не в npm, поэтому ставим из репозитория.
+## Установка
 
 ```bash
-# 1. клонируем и собираем плагин
-git clone https://github.com/Fakek0f3sT/dsh-mcp-diff.git
-cd dsh-mcp-diff
-npm install
-npm run build       # → lib/index.js (host) + lib/client.js (browser bundle)
+# из GitHub (собирается при установке)
+dsh plugin --profile web add github:Fakek0f3sT/dsh-mcp-diff
 ```
 
-Затем подключаем в свой DSH-профиль (`~/.dsh/profiles/<profile>/package.json`).
-Ставим ссылку на локальную сборку и добавляем плагин в бандлы профиля:
+`dsh plugin add` — это форвардер к pnpm: он добавляет пакет в ваш профиль
+(`~/.dsh/profiles/web`), а так как в пакете есть `prepare`-скрипт, pnpm собирает
+`lib/` сам при установке. Плагин объявляет `dsh.bundle`, поэтому автоматически
+попадает в `dsh.profile.bundles` профиля — руками ничего дописывать не нужно.
+
+**Важно:** DSH подхватывает набор плагинов только при старте — после установки
+**перезапустите `dsh web`** и обновите страницу GUI.
+
+Проверить, что бандл отдаётся:
 
 ```bash
-cd ~/.dsh/profiles/web        # ваш профиль
-npm install /path/to/dsh-mcp-diff   # или "link:" на клон
+curl -s http://127.0.0.1:3080/plugins/dsh-mcp-diff/client.js | head -c 80
+```
+
+<details>
+<summary>Вручную из клона</summary>
+
+```bash
+git clone https://github.com/Fakek0f3sT/dsh-mcp-diff.git
+cd dsh-mcp-diff && npm install && npm run build
+cd ~/.dsh/profiles/web
+npm install /path/to/dsh-mcp-diff
 ```
 
 ```jsonc
@@ -51,15 +62,7 @@ npm install /path/to/dsh-mcp-diff   # или "link:" на клон
   "dsh": { "profile": { "bundles": [ "…", "dsh-mcp-diff" ] } }
 }
 ```
-
-**Важно:** DSH подхватывает набор плагинов только при старте — после подключения
-**перезапустите `dsh web`** и обновите страницу GUI.
-
-Проверить, что бандл отдаётся:
-
-```bash
-curl -s http://127.0.0.1:3080/plugins/dsh-mcp-diff/client.js | head -c 80
-```
+</details>
 
 ## Настройка под другой MCP-сервер
 
