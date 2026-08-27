@@ -21,7 +21,6 @@
     "lib/client.js",
     "lib/types/**/*.d.ts",
     "cordis.patch.yml",
-    "src",
     "README.md",
     "LICENSE"
   ],
