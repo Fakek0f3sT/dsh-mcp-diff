@@ -1,6 +1,6 @@
 {
   "name": "dsh-mcp-diff",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Diff cards in the DeepSeek Harness web chat for MCP filesystem tool calls (edit_file, write_file) — same rendering as the built-in edit/write tools.",
   "type": "module",
   "main": "./lib/index.js",
