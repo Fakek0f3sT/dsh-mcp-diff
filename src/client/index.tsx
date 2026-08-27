@@ -30,9 +30,24 @@ import type { ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only: activates the `tool.call.toolview` slot declaration on SlotMap.
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client'
 
-/** Wire tool names this plugin owns. Change the `filesystem` segment here if
- * your MCP filesystem server is mounted under a different `serverName`. */
-const TOOL_KEYS = ['mcp__filesystem__edit_file', 'mcp__filesystem__write_file'] as const
+/** Wire tool names this plugin owns:
+ *   - MCP filesystem server (`mcp__<serverName>__…`) — has no diff view, so it
+ *     falls back to the generic row without this plugin. Change the
+ *     `filesystem` segment if your server is mounted under another `serverName`.
+ *   - the built-in `edit`/`write` tools — DSH already renders these through its
+ *     own `FileMutationRow`/`DiffBlock`; overriding the keys here routes them
+ *     through this plugin's card instead, so every file mutation in the chat
+ *     reads identically (same row-fill highlight). Removing the plugin restores
+ *     the native rows. */
+/** MCP filesystem keys — no shipped occupant at priority 0. */
+const MCP_TOOL_KEYS = [
+  'mcp__filesystem__edit_file',
+  'mcp__filesystem__write_file',
+] as const
+
+/** Built-in file tools — file-mutation-toolview owns these at priority 0;
+ * shadow with a lower rank (ascending priority, lowest renders). */
+const BUILTIN_TOOL_KEYS = ['edit', 'write'] as const
 
 /** One `edit_file` edit, as the MCP server's input schema shapes it. */
 interface FsEdit {
@@ -99,6 +114,98 @@ function contentLines(text: string): string[] {
   if (text === '') return []
   const body = text.endsWith('\n') ? text.slice(0, -1) : text
   return body.split('\n')
+}
+
+/** Line-level diff of two blocks via a longest-common-subsequence table:
+ * shared lines become `ctx`, the rest `del` (only-in-old) then `add`
+ * (only-in-new). Used for the built-in edit/write cards, whose per-hunk
+ * `oldText`/`newText` each bake in the same context lines — a plain del-all /
+ * add-all would print that context twice; the LCS recovers it as one neutral
+ * row, matching the unified look of the MCP server diff.
+ * ponytail: O(n·m) table, fine for a card's few-line hunks; a hunk of thousands
+ * of changed lines would want Myers, but edit/write hunks are small. */
+function lcsLines(oldText: string, newText: string): { lines: DiffLine[]; added: number; removed: number } {
+  const a = contentLines(oldText)
+  const b = contentLines(newText)
+  const n = a.length
+  const m = b.length
+  // dp[i][j] = LCS length of a[i..] and b[j..].
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0))
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1])
+    }
+  }
+  const lines: DiffLine[] = []
+  let added = 0
+  let removed = 0
+  let i = 0
+  let j = 0
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { lines.push({ kind: 'ctx', text: a[i] }); i++; j++ }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { lines.push({ kind: 'del', text: a[i] }); removed++; i++ }
+    else { lines.push({ kind: 'add', text: b[j] }); added++; j++ }
+  }
+  for (; i < n; i++) { lines.push({ kind: 'del', text: a[i] }); removed++ }
+  for (; j < m; j++) { lines.push({ kind: 'add', text: b[j] }); added++ }
+  return { lines, added, removed }
+}
+
+/** A diff-card render view carried on a settled or running tool block: the
+ * built-in edit/write tools attach `card:'diff'` with contextual FileDiff
+ * hunks. Loosely typed to avoid a value dependency on the presentation types. */
+interface DiffCardView {
+  card?: unknown
+  diffs?: unknown
+}
+interface FileDiff {
+  path: string
+  oldText: string | null
+  newText: string
+}
+
+/** Read the FileDiff hunks off a block's diff card view — result side first
+ * (the applied change once settled), else the call side (the intended change
+ * while running). Null when the block carries no `card:'diff'` view (every MCP
+ * call: the MCP filesystem server ships no render view). */
+function nativeDiffs(block: ToolCallBlock): FileDiff[] | null {
+  const pick = (view: DiffCardView | null | undefined): FileDiff[] | null => {
+    if (view === null || view === undefined || view.card !== 'diff') return null
+    if (!Array.isArray(view.diffs) || view.diffs.length === 0) return null
+    const out: FileDiff[] = []
+    for (const h of view.diffs as unknown[]) {
+      if (typeof h !== 'object' || h === null) return null
+      const { path, oldText, newText } = h as Record<string, unknown>
+      if (typeof path !== 'string' || typeof newText !== 'string') return null
+      if (oldText !== null && typeof oldText !== 'string') return null
+      out.push({ path, oldText, newText })
+    }
+    return out
+  }
+  const b = block as { callView?: DiffCardView | null; resultView?: DiffCardView | null }
+  return pick(b.resultView) ?? pick(b.callView)
+}
+
+/** Turn the built-in tool's contextual FileDiff hunks into one unified view:
+ * an LCS per hunk (so context lines read neutral, not doubled), hunks joined by
+ * a `⋯` gap on the hunk kind's dim tone. `oldText: null` (a create/overwrite)
+ * is all additions. */
+function viewFromNative(diffs: FileDiff[]): DiffView {
+  const lines: DiffLine[] = []
+  let added = 0
+  let removed = 0
+  diffs.forEach((d, idx) => {
+    if (idx > 0) lines.push({ kind: 'hunk', text: '⋯' })
+    if (d.oldText === null) {
+      for (const t of contentLines(d.newText)) { lines.push({ kind: 'add', text: t }); added++ }
+      return
+    }
+    const h = lcsLines(d.oldText, d.newText)
+    lines.push(...h.lines)
+    added += h.added
+    removed += h.removed
+  })
+  return { lines, added, removed }
 }
 
 /** Build a diff view from the call ARGUMENTS — the fallback source when no
@@ -186,7 +293,10 @@ const FILL: Record<DiffLineKind, string | undefined> = {
   ctx: undefined,
 }
 
-/** A colorized unified-diff card (context lines + `@@` headers preserved). */
+/** A colorized unified-diff card, collapsed by default so a run of file
+ * mutations stays scannable in the chat flow. The native `<details>` carries
+ * the open/closed state (no JS) — `<summary>` shows the path + `+N -M` count and
+ * toggles the diff body on click. */
 function UnifiedDiff({ path, lines, added, removed }: {
   path: string | null
   lines: DiffLine[]
@@ -194,21 +304,43 @@ function UnifiedDiff({ path, lines, added, removed }: {
   removed: number
 }) {
   return (
-    <div style={{
+    <details style={{
       margin: '16px 0',
       background: 'var(--dsw-alias-markdown-code-block)',
       borderRadius: 12,
       color: 'var(--dsw-alias-label-primary)',
     }}>
+      <summary style={{
+        padding: '10px 14px',
+        cursor: 'pointer',
+        font: 'var(--dsw-font-markdown-code-block)',
+        color: 'var(--dsw-alias-label-secondary)',
+        display: 'flex',
+        gap: 12,
+        alignItems: 'baseline',
+        whiteSpace: 'pre',
+        overflow: 'hidden',
+      }}>
+        {path !== null && (
+          <span style={{
+            fontWeight: 600,
+            color: 'var(--dsw-alias-label-primary)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}>{path}</span>
+        )}
+        <span style={{ marginLeft: 'auto', flexShrink: 0 }}>
+          <span style={{ color: 'var(--dsw-alias-state-success-primary)' }}>{`+${String(added)}`}</span>
+          {' '}
+          <span style={{ color: 'var(--dsw-alias-state-error-primary)' }}>{`-${String(removed)}`}</span>
+        </span>
+      </summary>
       <div style={{
-        padding: '12px 14px',
+        padding: '4px 14px 12px',
         font: 'var(--dsw-font-markdown-code-block)',
         overflowX: 'auto',
         overflowY: 'hidden',
       }}>
-        {path !== null && (
-          <div style={{ fontWeight: 600, whiteSpace: 'pre', minHeight: 22 }}>{path}</div>
-        )}
         {lines.map((line, i) => (
           <div key={i} style={{
             whiteSpace: 'pre',
@@ -224,14 +356,7 @@ function UnifiedDiff({ path, lines, added, removed }: {
           </div>
         ))}
       </div>
-      <div style={{
-        padding: '0 14px 12px',
-        font: 'var(--dsw-font-markdown-code-block)',
-        color: 'var(--dsw-alias-label-tertiary)',
-      }}>
-        {`└ +${String(added)} -${String(removed)}`}
-      </div>
-    </div>
+    </details>
   )
 }
 
@@ -243,11 +368,19 @@ interface McpDiffRowProps {
   block: ToolCallBlock
 }
 
-/** Diff row for an MCP filesystem mutation, rendered as one unified-diff card
- * regardless of tool or lifecycle: the settled server diff for `edit_file`
- * (context + `@@` headers), else an args-derived view (running edit, or any
- * write). A non-diffable payload shows a short note so the row is never blank. */
+/** Diff row rendered as one unified card for every file mutation, MCP or
+ * built-in, so they read identically:
+ *   - built-in edit/write carry a `card:'diff'` view with contextual hunks →
+ *     LCS-unified so context reads neutral.
+ *   - MCP `edit_file` (settled) → the server's unified diff (context + `@@`).
+ *   - MCP running edit / any MCP write → a view from the call arguments.
+ * A non-diffable payload shows a short note so the row is never blank. */
 function McpDiffRow({ toolName, block }: McpDiffRowProps) {
+  const native = nativeDiffs(block)
+  if (native !== null) {
+    const view = viewFromNative(native)
+    return <UnifiedDiff path={native[0].path} lines={view.lines} added={view.added} removed={view.removed} />
+  }
   const view = (toolName.endsWith('edit_file') ? parseServerDiff(resultTextOf(block)) : null)
     ?? viewFromArgs(toolName, block)
   if (view === null) {
@@ -263,15 +396,20 @@ export const inject = ['slots']
 export const name = 'dsh-mcp-diff'
 
 /**
- * Register the diff row into the Tool-owned keyed view slot under each MCP
- * filesystem mutation name. `slots.inject` defers the registration until the
- * slot declaration is live and re-runs it across the owner's HMR lifetime.
+ * Register the diff row into the Tool-owned keyed view slot under each owned
+ * tool name (MCP filesystem mutations + the built-in edit/write). A keyed
+ * registration shadows the shipped one, so edit/write route through this card
+ * too; `slots.inject` defers until the slot declaration is live and re-runs
+ * across the owner's HMR lifetime.
  * @param ctx - client root context (disposal rides ctx.effect inside register).
  */
 export function apply(ctx: Context): void {
   ctx.slots.inject('tool.call.toolview', function* () {
-    for (const key of TOOL_KEYS) {
+    for (const key of MCP_TOOL_KEYS) {
       yield ctx.slots.register({ name: 'tool.call.toolview', key }, McpDiffRow)
+    }
+    for (const key of BUILTIN_TOOL_KEYS) {
+      yield ctx.slots.register({ name: 'tool.call.toolview', key, priority: -1 }, McpDiffRow)
     }
   })
 }

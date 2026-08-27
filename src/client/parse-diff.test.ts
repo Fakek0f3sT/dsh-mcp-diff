@@ -103,4 +103,39 @@ assert.deepEqual(e.lines.map(l => l.kind), ['del', 'add', 'add'], 'edit = remova
 assert.equal(e.removed, 1)
 assert.equal(e.added, 2)
 
+// --- lcsLines: the built-in edit/write path (context lines dedup) ------------
+// Mirrors index.tsx; keep in sync.
+function lcsLines(oldText: string, newText: string): DiffView {
+  const a = contentLines(oldText)
+  const b = contentLines(newText)
+  const n = a.length
+  const m = b.length
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0))
+  for (let i = n - 1; i >= 0; i--)
+    for (let j = m - 1; j >= 0; j--)
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1])
+  const lines: DiffLine[] = []
+  let added = 0
+  let removed = 0
+  let i = 0
+  let j = 0
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { lines.push({ kind: 'ctx', text: a[i] }); i++; j++ }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { lines.push({ kind: 'del', text: a[i] }); removed++; i++ }
+    else { lines.push({ kind: 'add', text: b[j] }); added++; j++ }
+  }
+  for (; i < n; i++) { lines.push({ kind: 'del', text: a[i] }); removed++ }
+  for (; j < m; j++) { lines.push({ kind: 'add', text: b[j] }); added++ }
+  return { lines, added, removed }
+}
+
+// A contextual hunk (built-in edit bakes context into both sides): only the
+// changed middle line differs, the surrounding lines must read as one ctx each.
+const l = lcsLines('ctx1\nold\nctx2', 'ctx1\nnew\nctx2')
+assert.deepEqual(l.lines.map(x => x.kind), ['ctx', 'del', 'add', 'ctx'], 'context deduped to one row each')
+assert.equal(l.removed, 1)
+assert.equal(l.added, 1)
+assert.equal(l.lines[0].text, 'ctx1')
+assert.equal(l.lines[3].text, 'ctx2')
+
 console.log('parse-diff self-check ok')
