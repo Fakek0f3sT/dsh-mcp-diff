@@ -1,57 +1,59 @@
 # dsh-mcp-diff
 
-Кастомный клиентский плагин для **DeepSeek Harness (Web GUI)**, который рендерит
-все правки файлов в чате как **единообразные дифф-карточки** — свёрнутые по
-умолчанию, с построчной подсветкой (зелёным добавления, красным удаления).
+A client plugin for the **DeepSeek Harness (Web GUI)** that renders every file
+mutation in the chat as **uniform diff cards** — collapsed by default, with
+per-line highlighting (green for additions, red for deletions).
 
-Покрывает и MCP-сервер `filesystem` (`edit_file` / `write_file`), и встроенные
-инструменты DSH (`edit` / `write`), приводя их к одному виду.
+Covers both the `filesystem` MCP server (`edit_file` / `write_file`) and the
+built-in DSH tools (`edit` / `write`), bringing them to one look.
 
-## Зачем
+## Why
 
-По умолчанию DSH рисует дифф только для своих файловых инструментов
-(`edit`, `write`), и своим рендером. Когда агент правит файлы через MCP-сервер
-`@modelcontextprotocol/server-filesystem`, вызов называется
-`mcp__filesystem__edit_file` / `mcp__filesystem__write_file` — для него нет
-зарегистрированного toolview, и в чате виден только generic-блок без диффа.
+By default DSH draws a diff only for its own file tools (`edit`, `write`), with
+its own renderer. When the agent edits files through the
+`@modelcontextprotocol/server-filesystem` MCP server, the call is named
+`mcp__filesystem__edit_file` / `mcp__filesystem__write_file` — there is no
+registered toolview for it, so the chat shows only a generic block with no diff.
 
-Плагин:
+The plugin:
 
-- регистрирует toolview под MCP-ключами и строит дифф из ответа сервера
-  (готовый unified-diff с контекстом и `@@`-заголовками) либо из аргументов
-  вызова, когда ответа ещё нет (`write_file`, ещё выполняющийся `edit_file`);
-- перекрывает и встроенные `edit` / `write`, унифицируя их контекстные хунки
-  (построчный LCS: общие строки — нейтральный контекст, а не дублируются);
-- рисует всё одной карточкой на нативном `<details>` — **свёрнута по
-  умолчанию**, в шапке путь + `+N -M`, разворачивается по клику.
+- registers a toolview under the MCP keys and builds the diff from the server
+  response (a ready unified diff with context and `@@` headers) or from the call
+  arguments when there is no response yet (`write_file`, a still-running
+  `edit_file`);
+- also overrides the built-in `edit` / `write`, unifying their contextual hunks
+  (a per-line LCS: shared lines read as neutral context instead of being
+  doubled);
+- renders everything as one card built on a native `<details>` — **collapsed by
+  default**, the header shows the path + `+N -M`, and it expands on click.
 
-## Установка
+## Install
 
 ```bash
-# из npm (prebuilt, рекомендуется)
+# from npm (prebuilt, recommended)
 dsh plugin --profile web add dsh-mcp-diff
 
-# или из GitHub (собирается при установке)
+# or from GitHub (built on install)
 dsh plugin --profile web add github:Fakek0f3sT/dsh-mcp-diff
 ```
 
-`dsh plugin add` — это форвардер к pnpm: он добавляет пакет в ваш профиль
-(`~/.dsh/profiles/web`) и, так как плагин объявляет `dsh.bundle`, автоматически
-включает его в `dsh.profile.bundles` — руками ничего дописывать не нужно. При
-установке из GitHub `lib/` собирается на месте (`prepare`-скрипт); из npm едет
-уже собранным.
+`dsh plugin add` is a pnpm forwarder: it adds the package to your profile
+(`~/.dsh/profiles/web`) and, since the plugin declares `dsh.bundle`,
+automatically includes it in `dsh.profile.bundles` — nothing to wire by hand.
+Installed from GitHub, `lib/` is built in place (the `prepare` script); from npm
+it ships prebuilt.
 
-**Важно:** DSH подхватывает набор плагинов только при старте — после установки
-**перезапустите `dsh web`** и обновите страницу GUI.
+**Important:** DSH picks up its plugin set only at startup — after installing,
+**restart `dsh web`** and refresh the GUI page.
 
-Проверить, что бандл отдаётся:
+Check that the bundle is served:
 
 ```bash
 curl -s http://127.0.0.1:3080/plugins/dsh-mcp-diff/client.js | head -c 80
 ```
 
 <details>
-<summary>Вручную из клона</summary>
+<summary>Manually from a clone</summary>
 
 ```bash
 git clone https://github.com/Fakek0f3sT/dsh-mcp-diff.git
@@ -68,28 +70,27 @@ npm install /path/to/dsh-mcp-diff
 ```
 </details>
 
-## Настройка под другой MCP-сервер
+## Configuring for another MCP server
 
-Ключи toolview заданы под серверное имя `filesystem`. Если ваш MCP-сервер
-файловой системы называется иначе (поле `serverName` в конфиге), поправьте
-константу `TOOL_KEYS` в `src/client/index.tsx` (ключи вида
-`mcp__<serverName>__edit_file`). Там же — ключи `edit` / `write`: уберите их,
-если не хотите перекрывать встроенный рендер.
+The toolview keys are set for the server name `filesystem`. If your filesystem
+MCP server is named differently (the `serverName` field in the config), edit the
+`TOOL_KEYS` constant in `src/client/index.tsx` (keys of the form
+`mcp__<serverName>__edit_file`). The `edit` / `write` keys live there too —
+remove them if you do not want to override the built-in renderer.
 
-## Разработка
+## Development
 
 ```bash
 npm install
 npm run build
-node --import tsx/esm src/client/parse-diff.test.ts   # self-check парсера диффа
+node --import tsx/esm src/client/parse-diff.test.ts   # diff-parser self-check
 ```
 
-## Совместимость
+## Compatibility
 
-Проверено на DSH `0.1.1-rc.2`. Плагин использует только платформенные модули
-(react, ui-primitives, ui-slots, runtime/client) — внутренности ui-tool не
-импортируются.
+Tested on DSH `0.1.1-rc.2`. The plugin imports only platform modules (react,
+ui-primitives, ui-slots, runtime/client) — ui-tool internals are not imported.
 
-## Лицензия
+## License
 
 MIT
