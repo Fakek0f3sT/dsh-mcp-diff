@@ -19,16 +19,24 @@
  * Both sources render through the SAME local UnifiedDiff card (row-fill
  * highlight + `+N -M` footer), so an MCP edit and an MCP write read identically.
  *
+ * A third view owns the plain `bash` key: commands that clearly mutate file
+ * lines (parse-bash.ts, conservative command-text parsing) render as a badged
+ * diff card — intended change only, never verified filesystem state — while
+ * every other bash call keeps a plain terminal-like card, so the chat flow is
+ * unchanged for them.
+ *
  * The bundle may only value-import the platform module table (react,
  * ui-primitives, ui-slots, runtime/client); ui-tool internals are off-limits by
  * the client purity gate, so the diff card is a small local component styled
  * with the same theme tokens the native DiffBlock uses. The ui-tool import stays
  * type-only (it activates the `tool.call.toolview` SlotMap augmentation).
  */
+import type { ReactNode } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only: activates the `tool.call.toolview` slot declaration on SlotMap.
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client'
+import { parseBashEdit, type BashEdit } from './parse-bash'
 
 /** Wire tool names this plugin owns:
  *   - MCP filesystem server (`mcp__<serverName>__…`) — has no diff view, so it
@@ -296,12 +304,15 @@ const FILL: Record<DiffLineKind, string | undefined> = {
 /** A colorized unified-diff card, collapsed by default so a run of file
  * mutations stays scannable in the chat flow. The native `<details>` carries
  * the open/closed state (no JS) — `<summary>` shows the path + `+N -M` count and
- * toggles the diff body on click. */
-function UnifiedDiff({ path, lines, added, removed }: {
+ * toggles the diff body on click. `badge` annotates non-tool mutations (bash);
+ * `children` render after the diff lines (command/output for bash cards). */
+function UnifiedDiff({ path, lines, added, removed, badge, children }: {
   path: string | null
   lines: DiffLine[]
   added: number
   removed: number
+  badge?: string
+  children?: ReactNode
 }) {
   return (
     <details style={{
@@ -329,11 +340,16 @@ function UnifiedDiff({ path, lines, added, removed }: {
             textOverflow: 'ellipsis',
           }}>{path}</span>
         )}
-        <span style={{ marginLeft: 'auto', flexShrink: 0 }}>
-          <span style={{ color: 'var(--dsw-alias-state-success-primary)' }}>{`+${String(added)}`}</span>
-          {' '}
-          <span style={{ color: 'var(--dsw-alias-state-error-primary)' }}>{`-${String(removed)}`}</span>
-        </span>
+        {badge !== undefined && (
+          <span style={{ flexShrink: 0, color: 'var(--dsw-alias-label-tertiary)', fontSize: 11 }}>{badge}</span>
+        )}
+        {lines.length > 0 && (
+          <span style={{ marginLeft: 'auto', flexShrink: 0 }}>
+            <span style={{ color: 'var(--dsw-alias-state-success-primary)' }}>{`+${String(added)}`}</span>
+            {' '}
+            <span style={{ color: 'var(--dsw-alias-state-error-primary)' }}>{`-${String(removed)}`}</span>
+          </span>
+        )}
       </summary>
       <div style={{
         padding: '4px 14px 12px',
@@ -355,6 +371,7 @@ function UnifiedDiff({ path, lines, added, removed }: {
             {SIGN[line.kind] + line.text}
           </div>
         ))}
+        {children}
       </div>
     </details>
   )
@@ -389,6 +406,129 @@ function McpDiffRow({ toolName, block }: McpDiffRowProps) {
   return <UnifiedDiff path={pathOf(block)} lines={view.lines} added={view.added} removed={view.removed} />
 }
 
+function bashCommandOf(block: ToolCallBlock): string | null {
+  const args = argsRecordOf(block)
+  return args !== null && typeof args.command === 'string' ? args.command : null
+}
+
+function bashDescriptionOf(block: ToolCallBlock): string | null {
+  const args = argsRecordOf(block)
+  return args !== null && typeof args.description === 'string' ? args.description : null
+}
+
+/** Diff lines derivable from a parsed bash command: replace pairs LCS-unified,
+ * heredoc write bodies as add rows. Path-only shapes yield no lines. */
+function bashLines(edit: BashEdit): { lines: DiffLine[]; added: number; removed: number } {
+  const lines: DiffLine[] = []
+  let added = 0
+  let removed = 0
+  for (const pair of edit.pairs) {
+    const unified = lcsLines(pair.old, pair.new)
+    lines.push(...unified.lines)
+    added += unified.added
+    removed += unified.removed
+  }
+  for (const write of edit.writes) {
+    if (write.body === null) continue
+    for (const text of contentLines(write.body)) {
+      lines.push({ kind: 'add', text })
+      added++
+    }
+  }
+  return { lines, added, removed }
+}
+
+function bashKindBadge(edit: BashEdit): string {
+  const kinds = [
+    edit.pairs.length > 0 ? 'replace' : null,
+    edit.writes.length > 0 ? 'write' : null,
+    edit.seds.length > 0 ? 'in-place' : null,
+  ].filter((kind): kind is string => kind !== null)
+  const files = edit.files.length > 1 ? ` · ${String(edit.files.length)} files` : ''
+  return `bash edit · ${kinds.join('+')}${files}`
+}
+
+/** The bash-mutation card: intended diff from the command text, clearly badged
+ * as a bash edit (not an edit/MCP result), with the full command and the
+ * result tail one click away — that is all the client can honestly know. */
+function BashEditCard({ edit, command, block }: { edit: BashEdit; command: string; block: ToolCallBlock }) {
+  const view = bashLines(edit)
+  const out = resultTextOf(block)
+  const tail = out === '' ? '' : out.split('\n').slice(-31).join('\n')
+  return (
+    <UnifiedDiff
+      path={edit.files[0] ?? null}
+      lines={view.lines}
+      added={view.added}
+      removed={view.removed}
+      badge={bashKindBadge(edit)}
+    >
+      <div style={{ fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', margin: '6px 0 2px' }}>
+        intended change parsed from the bash command — not an edit/MCP tool result
+      </div>
+      <details style={{ marginTop: 2 }}>
+        <summary style={{ cursor: 'pointer', fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }}>command</summary>
+        <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{command}</pre>
+      </details>
+      {tail !== '' && (
+        <details style={{ marginTop: 2 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }}>output</summary>
+          <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{tail}</pre>
+        </details>
+      )}
+    </UnifiedDiff>
+  )
+}
+
+/** The plain bash card for non-mutating commands — same surface the native
+ * terminal view shows (name · description, command, output, running state),
+ * rebuilt locally because the generic tool card is not importable here. */
+function TerminalCard({ toolName, block }: McpDiffRowProps) {
+  const cmd = bashCommandOf(block)
+  const description = bashDescriptionOf(block)
+  const out = resultTextOf(block)
+  return (
+    <div style={{
+      margin: '16px 0',
+      padding: '10px 14px',
+      background: 'var(--dsw-alias-markdown-code-block)',
+      borderRadius: 12,
+      font: 'var(--dsw-font-markdown-code-block)',
+      color: 'var(--dsw-alias-label-primary)',
+    }}>
+      <div style={{ color: 'var(--dsw-alias-label-secondary)', fontSize: 12, marginBottom: cmd === null ? 0 : 6 }}>
+        {toolName}{description !== null ? ` · ${description}` : ''}
+      </div>
+      {cmd !== null && (
+        <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{cmd}</pre>
+      )}
+      {out !== '' ? (
+        <pre style={{
+          margin: '8px 0 0',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          color: 'var(--dsw-alias-label-secondary)',
+          maxHeight: 360,
+          overflowY: 'auto',
+        }}>{out}</pre>
+      ) : cmd !== null ? (
+        <div style={{ color: 'var(--dsw-alias-label-tertiary)', fontSize: 12, marginTop: 6 }}>running…</div>
+      ) : null}
+    </div>
+  )
+}
+
+/** Bash tool row: a file-mutating command renders as a badged diff-style card;
+ * everything else keeps a plain terminal-like card. The keyed slot hands us
+ * every bash call, so the null path (no recognizable mutation) must still
+ * render the whole row. */
+function BashRow(props: McpDiffRowProps) {
+  const command = bashCommandOf(props.block)
+  const edit = command === null ? null : parseBashEdit(command)
+  if (edit === null || command === null) return <TerminalCard {...props} />
+  return <BashEditCard edit={edit} command={command} block={props.block} />
+}
+
 /** Services this browser half reads; activation waits on the slot service. */
 export const inject = ['slots']
 
@@ -401,6 +541,10 @@ export const name = 'dsh-mcp-diff'
  * registration shadows the shipped one, so edit/write route through this card
  * too; `slots.inject` defers until the slot declaration is live and re-runs
  * across the owner's HMR lifetime.
+ *
+ * The `bash` key routes through BashRow: diff-style cards for recognizable
+ * line mutations, a terminal-like card for everything else (the keyed slot has
+ * no per-call decline, so the view owns the whole tool and must always render).
  * @param ctx - client root context (disposal rides ctx.effect inside register).
  */
 export function apply(ctx: Context): void {
@@ -411,5 +555,6 @@ export function apply(ctx: Context): void {
     for (const key of BUILTIN_TOOL_KEYS) {
       yield ctx.slots.register({ name: 'tool.call.toolview', key, priority: -1 }, McpDiffRow)
     }
+    yield ctx.slots.register({ name: 'tool.call.toolview', key: 'bash' }, BashRow)
   })
 }
