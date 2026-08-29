@@ -383,6 +383,7 @@ function UnifiedDiff({ path, lines, added, removed, badge, children }: {
 interface McpDiffRowProps {
   toolName: string
   block: ToolCallBlock
+  inspect?: () => void
 }
 
 /** Diff row rendered as one unified card for every file mutation, MCP or
@@ -480,41 +481,77 @@ function BashEditCard({ edit, command, block }: { edit: BashEdit; command: strin
   )
 }
 
-/** The plain bash card for non-mutating commands — same surface the native
- * terminal view shows (name · description, command, output, running state),
- * rebuilt locally because the generic tool card is not importable here. */
-function TerminalCard({ toolName, block }: McpDiffRowProps) {
+/** The plain bash row for non-mutating commands — collapsed by default like
+ * the core bash-sample row it shadows: `bash · description` as the whole-row
+ * toggle, command + output inside, both height-capped and scrollable. The
+ * keyed slot hands us every bash call, so this row must render for all of
+ * them (a hand-rolled stand-in: the native card is not importable here). */
+function TerminalCard({ toolName, block, inspect }: McpDiffRowProps) {
   const cmd = bashCommandOf(block)
   const description = bashDescriptionOf(block)
   const out = resultTextOf(block)
+  const exit = /\[exit code: (\d+)\]\s*$/.exec(out)
+  const summary = description ?? (cmd !== null ? cmd.split('\n')[0] : null)
   return (
-    <div style={{
+    <details style={{
       margin: '16px 0',
-      padding: '10px 14px',
       background: 'var(--dsw-alias-markdown-code-block)',
       borderRadius: 12,
       font: 'var(--dsw-font-markdown-code-block)',
       color: 'var(--dsw-alias-label-primary)',
     }}>
-      <div style={{ color: 'var(--dsw-alias-label-secondary)', fontSize: 12, marginBottom: cmd === null ? 0 : 6 }}>
-        {toolName}{description !== null ? ` · ${description}` : ''}
+      <summary style={{
+        padding: '10px 14px',
+        cursor: 'pointer',
+        display: 'flex',
+        gap: 12,
+        alignItems: 'baseline',
+        whiteSpace: 'pre',
+        overflow: 'hidden',
+      }}>
+        <span style={{ color: 'var(--dsw-alias-label-secondary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {toolName}{summary !== null ? ` · ${summary}` : ''}
+        </span>
+        {exit !== null ? (
+          <span style={{
+            marginLeft: 'auto',
+            flexShrink: 0,
+            fontSize: 11,
+            color: exit[1] === '0' ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-state-error-primary)',
+          }}>{`exit ${exit[1]}`}</span>
+        ) : out === '' ? (
+          <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 11, color: 'var(--dsw-alias-label-tertiary)' }}>running…</span>
+        ) : null}
+      </summary>
+      <div style={{ padding: '0 14px 12px' }}>
+        {cmd !== null && (
+          <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 240, overflowY: 'auto' }}>{cmd}</pre>
+        )}
+        {out !== '' && (
+          <pre style={{
+            margin: cmd !== null ? '8px 0 0' : 0,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            color: 'var(--dsw-alias-label-secondary)',
+            maxHeight: 440,
+            overflowY: 'auto',
+          }}>{out}</pre>
+        )}
+        {inspect !== undefined && (
+          <button type="button" onClick={inspect} style={{
+            marginTop: 8,
+            padding: '2px 10px',
+            font: 'inherit',
+            fontSize: 11,
+            color: 'var(--dsw-alias-label-secondary)',
+            background: 'transparent',
+            border: '1px solid var(--dsw-alias-label-tertiary)',
+            borderRadius: 8,
+            cursor: 'pointer',
+          }}>Inspect</button>
+        )}
       </div>
-      {cmd !== null && (
-        <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{cmd}</pre>
-      )}
-      {out !== '' ? (
-        <pre style={{
-          margin: '8px 0 0',
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-          color: 'var(--dsw-alias-label-secondary)',
-          maxHeight: 360,
-          overflowY: 'auto',
-        }}>{out}</pre>
-      ) : cmd !== null ? (
-        <div style={{ color: 'var(--dsw-alias-label-tertiary)', fontSize: 12, marginTop: 6 }}>running…</div>
-      ) : null}
-    </div>
+    </details>
   )
 }
 
