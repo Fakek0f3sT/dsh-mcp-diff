@@ -4,8 +4,9 @@ A client plugin for the **DeepSeek Harness (Web GUI)** that renders every file
 mutation in the chat as **uniform diff cards** — collapsed by default, with
 per-line highlighting (green for additions, red for deletions).
 
-Covers both the `filesystem` MCP server (`edit_file` / `write_file`) and the
-built-in DSH tools (`edit` / `write`), bringing them to one look.
+Covers the `filesystem` MCP server (`edit_file` / `write_file`), the built-in
+DSH tools (`edit` / `write`), and file-mutating **bash** commands — one look for
+all of them.
 
 ![A diff card rendered by dsh-mcp-diff in the DeepSeek Harness web chat](docs/screenshot.png)
 
@@ -28,6 +29,31 @@ The plugin:
   doubled);
 - renders everything as one card built on a native `<details>` — **collapsed by
   default**, the header shows the path + `+N -M`, and it expands on click.
+
+## Bash edit cards
+
+When the agent edits files through `bash` instead of a file tool (a `python3 -`
+heredoc with `old`/`new` blocks, `sed -i`, `cat > file <<EOF`, `tee`,
+`> file` redirects), DSH shows a plain terminal block and tracks no "files
+touched" — so the plugin owns the `bash` toolview and adds a card **only for
+commands it can confidently parse as line mutations**:
+
+- **replace** — a heredoc script that reads a file, `.replace()`s `old`/`new`
+  triple-quoted blocks and writes it back: the card shows the file, real
+  del/add lines and `+N -M` derived from those blocks;
+- **write** — `cat > f <<EOF`, `tee [-a] f <<EOF`, bare `> f` / `>> f`: the
+  path always, the added lines when the content is spelled out in the command;
+- **in-place** — `sed -i` / `perl -pi` with explicit file tokens: the path only.
+
+Every other bash call (`ls`, `git status`, builds, grep…) keeps a plain
+terminal-like card — it is never turned into a diff.
+
+The card is marked **`bash edit`** and carries a footnote: *intended change
+parsed from the bash command — not an edit/MCP tool result*. The client sees
+only the command text and its output (no filesystem access), so the diff is
+what the script **claims** to do, with the full command and the output tail
+one click away. Dynamic paths (`$VAR`, globs) and unsupported shapes are left
+unrendered on purpose: a missed card is better than a wrong one.
 
 ## Install
 
@@ -86,6 +112,7 @@ remove them if you do not want to override the built-in renderer.
 npm install
 npm run build
 node --import tsx/esm src/client/parse-diff.test.ts   # diff-parser self-check
+node --import tsx/esm src/client/parse-bash.test.ts   # bash-mutation parser self-check
 ```
 
 ## Compatibility
