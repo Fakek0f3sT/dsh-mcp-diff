@@ -403,7 +403,12 @@ function UnifiedDiff({ path, lines, added, removed, badge, state, children }: {
         padding: '4px 14px 12px',
         font: 'var(--dsw-font-markdown-code-block)',
         overflowX: 'auto',
-        overflowY: 'hidden',
+        // Cap the visible body at ~20 rows and scroll inside the card, so a
+        // large diff expands in place instead of taking over the chat flow.
+        // Kept on this same div as the horizontal scroller: the rows' full-bleed
+        // fill (negative margins) must stay inside ONE scroll context.
+        maxHeight: 448,
+        overflowY: 'auto',
       }}>
         {lines.map((line, i) => (
           <div key={i} style={{
