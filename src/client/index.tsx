@@ -34,6 +34,11 @@
 import type { ReactNode } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
+import { resolveWorkspacePath } from '@deepseek-ai/dsh-client-runtime/client'
+import {
+  IconApiOutline14, IconChevronDownOutline14, StateDot, TerminalBlock,
+  type TerminalBlockProps,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 // Type-only: activates the `tool.call.toolview` slot declaration on SlotMap.
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client'
 import { parseBashEdit, type BashEdit } from './parse-bash'
@@ -383,6 +388,10 @@ function UnifiedDiff({ path, lines, added, removed, badge, children }: {
 interface McpDiffRowProps {
   toolName: string
   block: ToolCallBlock
+  /** Session workspace root, for shortening workspace-rooted paths. */
+  cwd?: string | undefined
+  /** Session host home, so a terminal cwd equal to it collapses to `~`. */
+  home?: string | undefined
   inspect?: () => void
 }
 
@@ -481,17 +490,43 @@ function BashEditCard({ edit, command, block }: { edit: BashEdit; command: strin
   )
 }
 
-/** The plain bash row for non-mutating commands — collapsed by default like
- * the core bash-sample row it shadows: `bash · description` as the whole-row
- * toggle, command + output inside, both height-capped and scrollable. The
- * keyed slot hands us every bash call, so this row must render for all of
- * them (a hand-rolled stand-in: the native card is not importable here). */
-function TerminalCard({ toolName, block, inspect }: McpDiffRowProps) {
-  const cmd = bashCommandOf(block)
+/** Terminal-card props from the raw block, mirroring the essentials of ui-tool's
+ * terminalCardModel (not importable from a plugin): the call side carries the
+ * command and its working directory, the result side the output and exit
+ * status. Null → not a terminal card (the call should not draw a terminal). */
+function terminalCardProps(block: ToolCallBlock, sessionCwd: string | undefined, home: string | undefined): TerminalBlockProps | null {
+  const call = block.callView !== null && block.callView.card === 'terminal' ? block.callView : null
+  const cwd = call === null || call.cwd === undefined || call.cwd === ''
+    ? sessionCwd
+    : sessionCwd === undefined ? call.cwd : resolveWorkspacePath(sessionCwd, call.cwd)
+  if (!('kind' in block)) {
+    return call === null ? null : { command: call.title, cwd, home, running: true }
+  }
+  const result = block.resultView !== null && block.resultView.card === 'terminal' ? block.resultView : null
+  if (result === null) return null
+  return {
+    command: result.title ?? call?.title ?? '',
+    cwd: call === null ? undefined : cwd,
+    home,
+    output: result.output,
+    exitCode: result.exitCode,
+    signal: result.signal,
+  }
+}
+
+/** The plain bash row for non-mutating commands — a replica of the core
+ * bash-sample row this view shadows: an icon + `Bash · description` summary
+ * toggle (red state dot on failure), and the command's own TerminalBlock
+ * (prompt, Done/exit pill, Copy, native output handling) inside, plus Inspect.
+ * The keyed slot hands us every bash call, so this row must render for all of
+ * them; only the chrome around the block is hand-rolled. */
+function TerminalCard({ toolName, block, cwd, home, inspect }: McpDiffRowProps) {
+  const card = terminalCardProps(block, cwd, home)
+  const command = card?.command ?? bashCommandOf(block) ?? ''
   const description = bashDescriptionOf(block)
-  const out = resultTextOf(block)
-  const exit = /\[exit code: (\d+)\]\s*$/.exec(out)
-  const summary = description ?? (cmd !== null ? cmd.split('\n')[0] : null)
+  const summary = description ?? (command !== '' ? command.split('\n')[0] : null)
+  const failed = card !== null && card.running !== true
+    && ((card.exitCode !== undefined && card.exitCode !== 0) || card.signal !== undefined)
   return (
     <details style={{
       margin: '16px 0',
@@ -501,42 +536,31 @@ function TerminalCard({ toolName, block, inspect }: McpDiffRowProps) {
       color: 'var(--dsw-alias-label-primary)',
     }}>
       <summary style={{
-        padding: '10px 14px',
+        padding: '8px 14px',
         cursor: 'pointer',
         display: 'flex',
-        gap: 12,
-        alignItems: 'baseline',
-        whiteSpace: 'pre',
+        gap: 8,
+        alignItems: 'center',
         overflow: 'hidden',
       }}>
-        <span style={{ color: 'var(--dsw-alias-label-secondary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {toolName}{summary !== null ? ` · ${summary}` : ''}
+        {failed ? <StateDot state="error" /> : <IconApiOutline14 size={14} />}
+        <span style={{ fontWeight: 600, flexShrink: 0 }}>
+          {toolName.charAt(0).toUpperCase() + toolName.slice(1)}
         </span>
-        {exit !== null ? (
+        {summary !== null && (
           <span style={{
-            marginLeft: 'auto',
-            flexShrink: 0,
-            fontSize: 11,
-            color: exit[1] === '0' ? 'var(--dsw-alias-label-tertiary)' : 'var(--dsw-alias-state-error-primary)',
-          }}>{`exit ${exit[1]}`}</span>
-        ) : out === '' ? (
-          <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 11, color: 'var(--dsw-alias-label-tertiary)' }}>running…</span>
-        ) : null}
+            color: 'var(--dsw-alias-label-secondary)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}>{summary}</span>
+        )}
+        <span style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex' }}>
+          <IconChevronDownOutline14 className="dsh-mcp-diff-chev" />
+        </span>
       </summary>
       <div style={{ padding: '0 14px 12px' }}>
-        {cmd !== null && (
-          <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 240, overflowY: 'auto' }}>{cmd}</pre>
-        )}
-        {out !== '' && (
-          <pre style={{
-            margin: cmd !== null ? '8px 0 0' : 0,
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-            color: 'var(--dsw-alias-label-secondary)',
-            maxHeight: 440,
-            overflowY: 'auto',
-          }}>{out}</pre>
-        )}
+        {card !== null && <TerminalBlock {...card} />}
         {inspect !== undefined && (
           <button type="button" onClick={inspect} style={{
             marginTop: 8,
@@ -572,6 +596,19 @@ export const inject = ['slots']
 /** Plugin name: matches the package name and the composition row id family. */
 export const name = 'dsh-mcp-diff'
 
+/** One-shot stylesheet for what inline styles cannot express: the chevron
+ * rotating once its <details> opens. Idempotent across activations. */
+function ensureCardStyle(): void {
+  if (document.getElementById('dsh-mcp-diff-style') !== null) return
+  const style = document.createElement('style')
+  style.id = 'dsh-mcp-diff-style'
+  style.textContent = [
+    '.dsh-mcp-diff-chev{transition:transform .15s ease;color:var(--dsw-alias-label-tertiary)}',
+    'details[open]>summary .dsh-mcp-diff-chev{transform:rotate(90deg)}',
+  ].join('\n')
+  document.head.appendChild(style)
+}
+
 /**
  * Register the diff row into the Tool-owned keyed view slot under each owned
  * tool name (MCP filesystem mutations + the built-in edit/write). A keyed
@@ -585,6 +622,7 @@ export const name = 'dsh-mcp-diff'
  * @param ctx - client root context (disposal rides ctx.effect inside register).
  */
 export function apply(ctx: Context): void {
+  ensureCardStyle()
   ctx.slots.inject('tool.call.toolview', function* () {
     for (const key of MCP_TOOL_KEYS) {
       yield ctx.slots.register({ name: 'tool.call.toolview', key }, McpDiffRow)
