@@ -109,7 +109,7 @@ check('pairs w/o replace: null', parseBashEdit(`python3 - <<'EOF'\np = Path("f.m
 
 if (failed > 0) {
   console.error(`parse-bash self-check FAILED (${failed})`)
-  process.exitCode = 1
+  throw new Error(`parse-bash self-check FAILED (${failed})`) // nonzero exit without Node types
 } else {
   console.log('parse-bash self-check ok')
 }
