@@ -555,6 +555,10 @@ export function apply(ctx: Context): void {
     for (const key of BUILTIN_TOOL_KEYS) {
       yield ctx.slots.register({ name: 'tool.call.toolview', key, priority: -1 }, McpDiffRow)
     }
-    yield ctx.slots.register({ name: 'tool.call.toolview', key: 'bash' }, BashRow)
+    // bash-toolview-sample owns `bash` at priority 0; shadow like edit/write.
+    yield ctx.slots.register(
+      { name: 'tool.call.toolview', key: 'bash', priority: -1 },
+      BashRow,
+    )
   })
 }
