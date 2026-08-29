@@ -337,6 +337,9 @@ function UnifiedDiff({ path, lines, added, removed, badge, children }: {
         whiteSpace: 'pre',
         overflow: 'hidden',
       }}>
+        <span style={{ display: 'flex', flexShrink: 0, alignSelf: 'center' }}>
+          <IconChevronDownOutline14 className="dsh-mcp-diff-chev" />
+        </span>
         {path !== null && (
           <span style={{
             fontWeight: 600,
