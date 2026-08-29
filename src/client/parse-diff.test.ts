@@ -6,7 +6,11 @@
  * parseServerDiff is defined inside index.tsx (browser bundle, no test export),
  * so this check reproduces it verbatim. If you change the parser in index.tsx,
  * mirror it here — the copy is what keeps this a zero-import, one-file check.
+ *
+ * @ts-nocheck: the plugin targets the browser and carries no Node types; the
+ * node:assert import below is runtime-valid under the tsx loader only.
  */
+// @ts-nocheck
 import assert from 'node:assert/strict'
 
 type DiffLineKind = 'hunk' | 'add' | 'del' | 'ctx'
@@ -49,7 +53,7 @@ const editDiff = [
 ].join('\n')
 
 const r = parseServerDiff(editDiff)
-assert.ok(r !== null, 'edit diff must parse')
+if (r === null) throw new Error('edit diff must parse') // narrows for tsc regardless of assert typings
 assert.equal(r.added, 2, 'two added lines')
 assert.equal(r.removed, 1, 'one removed line')
 assert.deepEqual(r.lines.map(l => l.kind), ['hunk', 'ctx', 'del', 'add', 'add', 'ctx'])
@@ -92,13 +96,13 @@ function viewFromArgs(toolName: string, record: Record<string, unknown>): DiffVi
 }
 
 const w = viewFromArgs('mcp__filesystem__write_file', { path: '/f', content: 'a\nb\nc\n' })
-assert.ok(w !== null)
+if (w === null) throw new Error('write view: null') // narrows for tsc regardless of assert typings
 assert.deepEqual(w.lines.map(l => l.kind), ['add', 'add', 'add'], 'write = all additions')
 assert.equal(w.added, 3)
 assert.equal(w.removed, 0)
 
 const e = viewFromArgs('mcp__filesystem__edit_file', { path: '/f', edits: [{ oldText: 'x', newText: 'y\nz' }] })
-assert.ok(e !== null)
+if (e === null) throw new Error('edit view: null')
 assert.deepEqual(e.lines.map(l => l.kind), ['del', 'add', 'add'], 'edit = removals then additions')
 assert.equal(e.removed, 1)
 assert.equal(e.added, 2)
