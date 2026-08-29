@@ -398,6 +398,14 @@ interface McpDiffRowProps {
   inspect?: () => void
 }
 
+/** Shorten a file path for display: a workspace-rooted file renders relative
+ * to the session workspace, anything else stays absolute. */
+function displayPath(path: string, cwd: string | undefined): string {
+  if (cwd === undefined || cwd === '') return path
+  const root = cwd.endsWith('/') ? cwd : `${cwd}/`
+  return path.startsWith(root) ? path.slice(root.length) : path
+}
+
 /** Diff row rendered as one unified card for every file mutation, MCP or
  * built-in, so they read identically:
  *   - built-in edit/write carry a `card:'diff'` view with contextual hunks →
@@ -405,18 +413,19 @@ interface McpDiffRowProps {
  *   - MCP `edit_file` (settled) → the server's unified diff (context + `@@`).
  *   - MCP running edit / any MCP write → a view from the call arguments.
  * A non-diffable payload shows a short note so the row is never blank. */
-function McpDiffRow({ toolName, block }: McpDiffRowProps) {
+function McpDiffRow({ toolName, block, cwd }: McpDiffRowProps) {
   const native = nativeDiffs(block)
   if (native !== null) {
     const view = viewFromNative(native)
-    return <UnifiedDiff path={native[0].path} lines={view.lines} added={view.added} removed={view.removed} />
+    return <UnifiedDiff path={displayPath(native[0].path, cwd)} lines={view.lines} added={view.added} removed={view.removed} />
   }
   const view = (toolName.endsWith('edit_file') ? parseServerDiff(resultTextOf(block)) : null)
     ?? viewFromArgs(toolName, block)
   if (view === null) {
     return <div style={{ opacity: 0.6, fontSize: 12 }}>{toolName}</div>
   }
-  return <UnifiedDiff path={pathOf(block)} lines={view.lines} added={view.added} removed={view.removed} />
+  const argsPath = pathOf(block)
+  return <UnifiedDiff path={argsPath === null ? null : displayPath(argsPath, cwd)} lines={view.lines} added={view.added} removed={view.removed} />
 }
 
 function bashCommandOf(block: ToolCallBlock): string | null {
@@ -464,13 +473,13 @@ function bashKindBadge(edit: BashEdit): string {
 /** The bash-mutation card: intended diff from the command text, clearly badged
  * as a bash edit (not an edit/MCP result), with the full command and the
  * result tail one click away — that is all the client can honestly know. */
-function BashEditCard({ edit, command, block }: { edit: BashEdit; command: string; block: ToolCallBlock }) {
+function BashEditCard({ edit, command, block, cwd }: { edit: BashEdit; command: string; block: ToolCallBlock; cwd?: string | undefined }) {
   const view = bashLines(edit)
   const out = resultTextOf(block)
   const tail = out === '' ? '' : out.split('\n').slice(-31).join('\n')
   return (
     <UnifiedDiff
-      path={edit.files[0] ?? null}
+      path={edit.files.length > 0 ? displayPath(edit.files[0], cwd) : null}
       lines={view.lines}
       added={view.added}
       removed={view.removed}
@@ -590,7 +599,7 @@ function BashRow(props: McpDiffRowProps) {
   const command = bashCommandOf(props.block)
   const edit = command === null ? null : parseBashEdit(command)
   if (edit === null || command === null) return <TerminalCard {...props} />
-  return <BashEditCard edit={edit} command={command} block={props.block} />
+  return <BashEditCard edit={edit} command={command} block={props.block} cwd={props.cwd} />
 }
 
 /** Services this browser half reads; activation waits on the slot service. */
