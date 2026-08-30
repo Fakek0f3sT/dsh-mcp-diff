@@ -16,6 +16,9 @@
  *      only "Successfully wrote to …") — build the diff from the call ARGUMENTS:
  *      `edits[].oldText/newText`, or `content` as a whole-file add.
  *
+ * `move_file` is a mutation without a diff: its card is informational —
+ * `source → destination` in the same card family (no diff lines exist).
+ *
  * Both sources render through the SAME local UnifiedDiff card (row-fill
  * highlight + `+N -M` footer), so an MCP edit and an MCP write read identically.
  *
@@ -57,6 +60,11 @@ const MCP_TOOL_KEYS = [
   'mcp__filesystem__edit_file',
   'mcp__filesystem__write_file',
 ] as const
+
+/** MCP filesystem `move_file` (args `{ source, destination }`) — a free key
+ * like the two above, but a move carries no diff, so it gets its own info
+ * row instead of McpDiffRow. */
+const MCP_MOVE_FILE_KEY = 'mcp__filesystem__move_file'
 
 /** Built-in file tools — file-mutation-toolview owns these at priority 0;
  * shadow with a lower rank (ascending priority, lowest renders). */
@@ -428,6 +436,34 @@ function McpDiffRow({ toolName, block, cwd }: McpDiffRowProps) {
   return <UnifiedDiff path={argsPath === null ? null : displayPath(argsPath, cwd)} lines={view.lines} added={view.added} removed={view.removed} />
 }
 
+/** The MCP filesystem `move_file` call as an informational card: a rename has
+ * no diff lines, so the summary IS the content — `source` in the header under
+ * a `move` badge, the destination in the body, both workspace-shortened.
+ * Reusing UnifiedDiff buys the family style and the collapse chevron for
+ * free. While args stream in (or for a foreign shape) — the same dim toolName
+ * row McpDiffRow falls back to. */
+function MoveFileRow({ toolName, block, cwd }: McpDiffRowProps) {
+  const args = argsRecordOf(block)
+  const source = args !== null && typeof args.source === 'string' ? args.source : null
+  const destination = args !== null && typeof args.destination === 'string' ? args.destination : null
+  if (source === null || destination === null) {
+    return <div style={{ opacity: 0.6, fontSize: 12 }}>{toolName}</div>
+  }
+  return (
+    <UnifiedDiff
+      path={displayPath(source, cwd)}
+      lines={[]}
+      added={0}
+      removed={0}
+      badge="move"
+    >
+      <div style={{ fontSize: 12, color: 'var(--dsw-alias-label-secondary)', margin: '6px 0 2px' }}>
+        {`→ ${displayPath(destination, cwd)}`}
+      </div>
+    </UnifiedDiff>
+  )
+}
+
 function bashCommandOf(block: ToolCallBlock): string | null {
   const args = argsRecordOf(block)
   return args !== null && typeof args.command === 'string' ? args.command : null
@@ -647,6 +683,8 @@ export function apply(ctx: Context): void {
     for (const key of MCP_TOOL_KEYS) {
       yield ctx.slots.register({ name: 'tool.call.toolview', key }, McpDiffRow)
     }
+    // move_file: no diff to show — an informational source → destination card.
+    yield ctx.slots.register({ name: 'tool.call.toolview', key: MCP_MOVE_FILE_KEY }, MoveFileRow)
     for (const key of BUILTIN_TOOL_KEYS) {
       yield ctx.slots.register({ name: 'tool.call.toolview', key, priority: -1 }, McpDiffRow)
     }
