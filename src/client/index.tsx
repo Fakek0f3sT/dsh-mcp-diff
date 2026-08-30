@@ -472,7 +472,10 @@ function bashKindBadge(edit: BashEdit): string {
 
 /** The bash-mutation card: intended diff from the command text, clearly badged
  * as a bash edit (not an edit/MCP result), with the full command and the
- * result tail one click away — that is all the client can honestly know. */
+ * result tail one click away — that is all the client can honestly know.
+ * The header always shows the first file; a multi-file command lists the
+ * remaining paths in the body (for line-less cards — sed/redirect — that list
+ * is the whole mutation picture besides command/output). */
 function BashEditCard({ edit, command, block, cwd }: { edit: BashEdit; command: string; block: ToolCallBlock; cwd?: string | undefined }) {
   const view = bashLines(edit)
   const out = resultTextOf(block)
@@ -485,6 +488,11 @@ function BashEditCard({ edit, command, block, cwd }: { edit: BashEdit; command: 
       removed={view.removed}
       badge={bashKindBadge(edit)}
     >
+      {edit.files.length > 1 && (
+        <div style={{ fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', margin: '6px 0 2px' }}>
+          {`also touches: ${edit.files.slice(1).map((f) => displayPath(f, cwd)).join(', ')}`}
+        </div>
+      )}
       <div style={{ fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', margin: '6px 0 2px' }}>
         intended change parsed from the bash command — not an edit/MCP tool result
       </div>
