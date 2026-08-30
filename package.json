@@ -27,6 +27,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json && tsdown",
     "typecheck": "tsc --noEmit",
+    "test": "node --import tsx src/client/parse-bash.test.ts && node --import tsx src/client/parse-diff.test.ts",
     "prepare": "npm run build"
   },
   "dsh": {
@@ -60,6 +61,7 @@
     "@types/react": "^18.3.0",
     "react": "^18.3.1",
     "tsdown": "^0.15.0",
+    "tsx": "^4.23.12",
     "typescript": "^5.6.0"
   }
 }
