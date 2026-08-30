@@ -113,8 +113,7 @@ too — remove them if you do not want to override the built-in renderer.
 ```bash
 npm install
 npm run build
-node --import tsx/esm src/client/parse-diff.test.ts   # diff-parser self-check
-node --import tsx/esm src/client/parse-bash.test.ts   # bash-mutation parser self-check
+npm run test   # both self-checks (bash-mutation parser + diff parser) via tsx
 ```
 
 ## Compatibility

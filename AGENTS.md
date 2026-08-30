@@ -46,9 +46,7 @@ ui-tool internals (GenericToolCard, toolRowModel, terminalCardModel, css-мод�
 npm install
 npm run build        # tsc -p tsconfig.build.json && tsdown  (lib/client.js)
 npm run typecheck    # tsc --noEmit (включая тесты)
-node --import "$DSH_CHECKOUT/node_modules/tsx/dist/loader.mjs" src/client/parse-bash.test.ts
-node --import "$DSH_CHECKOUT/node_modules/tsx/dist/loader.mjs" src/client/parse-diff.test.ts
-# DSH_CHECKOUT = ~/projects/github/deepseek-harness (локально есть tsx из его node_modules)
+npm run test         # оба self-check (tsx теперь в devDependencies)
 ```
 
 Self-check печатают `… self-check ok` и exit 0, либо имена упавших кейсов.

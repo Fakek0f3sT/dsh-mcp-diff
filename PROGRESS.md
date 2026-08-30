@@ -3,6 +3,19 @@
 Формат: одна запись на закрытую задачу/релиз, новые сверху. Пишет агент,
 закрывающий задачу (см. `AGENTS.md`, `TODO.md`).
 
+## 2026-08-30 — GitHub Actions CI (TODO #3)
+
+Ветка `ci/github-actions` → `main` (ff).
+
+- `.github/workflows/ci.yml`: push/PR → node 22 (`setup-node@v4`, cache pnpm),
+  pnpm 11 (`pnpm/action-setup@v4`), `pnpm install --frozen-lockfile`, build,
+  typecheck, оба self-check.
+- `tsx` добавлен в devDependencies; скрипт `npm run test` = оба self-check —
+  локально и в CI больше не нужен DSH_CHECKOUT с его tsx.
+- pnpm 11 требует одобрения build-скриптов: `pnpm approve-builds esbuild` →
+  `pnpm-workspace.yaml` (`allowBuilds`), иначе `pnpm install` выходит с кодом 1.
+- AGENTS.md/README: локальный запуск self-check заменён на `npm run test`.
+
 ## 2026-08-30 — move_file как инфо-карточка (TODO #2)
 
 Ветка `feat/mcp-move-file-card` → `main` (ff).
