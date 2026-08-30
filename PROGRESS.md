@@ -3,6 +3,18 @@
 Формат: одна запись на закрытую задачу/релиз, новые сверху. Пишет агент,
 закрывающий задачу (см. `AGENTS.md`, `TODO.md`).
 
+## 2026-08-30 — move_file как инфо-карточка (TODO #2)
+
+Ветка `feat/mcp-move-file-card` → `main` (ff).
+
+- ключ `mcp__filesystem__move_file` (priority 0, как остальные MCP-ключи)
+  зарегистрирован на новый `MoveFileRow`: заголовок = source с бейджем `move`,
+  в теле строка `→ destination`; оба пути через `displayPath(…, cwd)` — внутри
+  workspace относительные.
+- карточка собрана на `UnifiedDiff` без diff-строк — бесплатно шеврон и стиль
+  семейства; пока args не распарсились — dim-строка toolName (как fallback у
+  McpDiffRow).
+
 ## 2026-08-30 — multi-file в шапке bash-карточки (TODO #1)
 
 Ветка `feat/multi-file-bash-header` → `main` (ff).

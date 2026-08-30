@@ -4,9 +4,9 @@ A client plugin for the **DeepSeek Harness (Web GUI)** that renders every file
 mutation in the chat as **uniform diff cards** — collapsed by default, with
 per-line highlighting (green for additions, red for deletions).
 
-Covers the `filesystem` MCP server (`edit_file` / `write_file`), the built-in
-DSH tools (`edit` / `write`), and file-mutating **bash** commands — one look for
-all of them.
+Covers the `filesystem` MCP server (`edit_file` / `write_file` / `move_file`),
+the built-in DSH tools (`edit` / `write`), and file-mutating **bash** commands —
+one look for all of them.
 
 ![A diff card rendered by dsh-mcp-diff in the DeepSeek Harness web chat](docs/screenshot.png)
 
@@ -27,6 +27,8 @@ The plugin:
 - also overrides the built-in `edit` / `write`, unifying their contextual hunks
   (a per-line LCS: shared lines read as neutral context instead of being
   doubled);
+- renders `move_file` as a compact informational card — `source → destination`,
+  both workspace-relative — since a rename carries no diff lines;
 - renders everything as one card built on a native `<details>` — **collapsed by
   default**, the header shows the path + `+N -M`, and it expands on click.
 
@@ -102,9 +104,9 @@ npm install /path/to/dsh-mcp-diff
 
 The toolview keys are set for the server name `filesystem`. If your filesystem
 MCP server is named differently (the `serverName` field in the config), edit the
-`TOOL_KEYS` constant in `src/client/index.tsx` (keys of the form
-`mcp__<serverName>__edit_file`). The `edit` / `write` keys live there too —
-remove them if you do not want to override the built-in renderer.
+key constants in `src/client/index.tsx` (`MCP_TOOL_KEYS`, `MCP_MOVE_FILE_KEY` —
+keys of the form `mcp__<serverName>__…`). The `edit` / `write` keys live there
+too — remove them if you do not want to override the built-in renderer.
 
 ## Development
 
