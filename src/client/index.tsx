@@ -603,6 +603,10 @@ function TerminalCard({ toolName, block, cwd, home, inspect }: McpDiffRowProps) 
   const summary = description ?? (command !== '' ? command.split('\n')[0] : null)
   const failed = card !== null && card.running !== true
     && ((card.exitCode !== undefined && card.exitCode !== 0) || card.signal !== undefined)
+  // A view-less settled block carries no exit material; its isError flag is
+  // the row's only failure signal (mirrors the core's terminalFailed arm).
+  const resultError = card !== null && card.running !== true && card.exitCode === undefined && card.signal === undefined
+    && (block as { isError?: boolean }).isError === true
   return (
     <details style={{
       margin: '16px 0',
