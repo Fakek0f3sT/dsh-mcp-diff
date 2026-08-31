@@ -549,24 +549,44 @@ function BashEditCard({ edit, command, block, cwd }: { edit: BashEdit; command: 
 /** Terminal-card props from the raw block, mirroring the essentials of ui-tool's
  * terminalCardModel (not importable from a plugin): the call side carries the
  * command and its working directory, the result side the output and exit
- * status. Null → not a terminal card (the call should not draw a terminal). */
+ * status. Null → not a terminal card (the call should not draw a terminal).
+ *
+ * Code-dispatch SUB-calls never carry render views — the runtime mints them
+ * with `callView: null` and a settled `resultView: null` (only the result
+ * `content` survives). A top-level call can settle view-less too (an execution
+ * error without terminal material). There the raw block itself still names
+ * the command (args) and its output (content text), so the card is assembled
+ * from that instead of collapsing to an empty body. */
 function terminalCardProps(block: ToolCallBlock, sessionCwd: string | undefined, home: string | undefined): TerminalBlockProps | null {
   const call = block.callView !== null && block.callView.card === 'terminal' ? block.callView : null
   const cwd = call === null || call.cwd === undefined || call.cwd === ''
     ? sessionCwd
     : sessionCwd === undefined ? call.cwd : resolveWorkspacePath(sessionCwd, call.cwd)
   if (!('kind' in block)) {
-    return call === null ? null : { command: call.title, cwd, home, running: true }
+    // Running without a call view: a view-less sub-call mid-flight. Keep the
+    // terminal shape (command + running) so the row is honest about it.
+    return { command: call?.title ?? bashCommandOf(block) ?? '', cwd, home, running: true }
   }
   const result = block.resultView !== null && block.resultView.card === 'terminal' ? block.resultView : null
-  if (result === null) return null
+  if (result !== null) {
+    return {
+      command: result.title ?? call?.title ?? '',
+      cwd: call === null ? undefined : cwd,
+      home,
+      output: result.output,
+      exitCode: result.exitCode,
+      signal: result.signal,
+    }
+  }
+  // Settled without a terminal view: fall back to the raw material — the
+  // command from the call args, the output from the result content text.
+  // Empty output is preserved (TerminalBlock draws its own no-output state).
+  const output = resultTextOf(block)
   return {
-    command: result.title ?? call?.title ?? '',
+    command: call?.title ?? bashCommandOf(block) ?? '',
     cwd: call === null ? undefined : cwd,
     home,
-    output: result.output,
-    exitCode: result.exitCode,
-    signal: result.signal,
+    output: output === '' ? undefined : output,
   }
 }
 
