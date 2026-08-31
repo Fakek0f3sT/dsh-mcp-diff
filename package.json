@@ -1,6 +1,6 @@
 {
   "name": "dsh-mcp-diff",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Diff cards in the DeepSeek Harness web chat for every file mutation — MCP filesystem calls (edit_file, write_file), built-in edit/write, and file-mutating bash commands (heredoc replaces, sed -i, cat/tee/redirect writes).",
   "type": "module",
   "main": "./lib/index.js",
