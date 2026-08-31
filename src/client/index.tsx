@@ -40,10 +40,33 @@ import type { ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
 import { resolveWorkspacePath } from '@deepseek-ai/dsh-client-runtime/client'
 import {
   IconApiOutline14, IconChevronDownOutline14, StateDot, TerminalBlock,
-  type TerminalBlockProps,
+  type TerminalBlockLabels, type TerminalBlockProps,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: activates the `tool.call.toolview` slot declaration on SlotMap.
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client'
+
+// The host merges the `conversation` dictionary namespace (and the shared
+// `common` vocabulary) into LocaleNamespaceMap from packages this plugin does
+// not depend on — declare the keys this view consumes so `locale:
+// 'conversation'` typechecks and the framework-synthesized `t` seat is typed.
+// At runtime the host's real dictionaries serve every lookup; this local merge
+// types only this compilation.
+declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface LocaleNamespaceMap {
+    conversation:
+      | 'terminal.signal'
+      | 'terminal.exitCode'
+      | 'terminal.running'
+      | 'terminal.failed'
+      | 'terminal.done'
+      | 'terminal.noOutput'
+      | 'terminal.collapseAria'
+      | 'terminal.expandAria'
+      | 'terminal.expandRest'
+    common: 'copy' | 'copied' | 'collapse'
+  }
+}
 import { parseBashEdit, type BashEdit } from './parse-bash'
 
 /** Wire tool names this plugin owns:
@@ -413,6 +436,9 @@ interface McpDiffRowProps {
   /** Session host home, so a terminal cwd equal to it collapses to `~`. */
   home?: string | undefined
   inspect?: () => void
+  /** Conversation locale seat, present on the `bash` entry only (the one
+   * registration declaring `locale:`); other rows render without it. */
+  t?: TranslateNS<'conversation'> | undefined
 }
 
 /** Shorten a file path for display: a workspace-rooted file renders relative
@@ -612,6 +638,30 @@ function BashEditCard({ edit, command, block, cwd }: { edit: BashEdit; command: 
   )
 }
 
+/** Build the TerminalBlock display copy from the conversation locale seat —
+ * a local replica of ui-tool's terminalBlockLabels (internal, not importable
+ * from a plugin). Without it the primitive's Chinese DEFAULT_LABELS show
+ * (复制/已完成) regardless of the GUI language, because the primitive is
+ * cordis-free and receives every label through props. The lookup chain
+ * consults the shared `common` namespace after `conversation` misses
+ * (copy/copied/collapse live there). */
+function terminalBlockLabels(t: TranslateNS<'conversation'>): TerminalBlockLabels {
+  return {
+    signal: signal => t('terminal.signal', { signal }),
+    exitCode: code => t('terminal.exitCode', { code }),
+    running: t('terminal.running'),
+    failed: t('terminal.failed'),
+    done: t('terminal.done'),
+    copy: t('copy'),
+    copied: t('copied'),
+    noOutput: t('terminal.noOutput'),
+    collapseAria: t('terminal.collapseAria'),
+    collapse: t('collapse'),
+    expandAria: hidden => t('terminal.expandAria', { n: hidden }),
+    expand: hidden => t('terminal.expandRest', { n: hidden }),
+  }
+}
+
 /** Terminal-card props from the raw block, mirroring the essentials of ui-tool's
  * terminalCardModel (not importable from a plugin): the call side carries the
  * command and its working directory, the result side the output and exit
@@ -662,7 +712,7 @@ function terminalCardProps(block: ToolCallBlock, sessionCwd: string | undefined,
  * (prompt, Done/exit pill, Copy, native output handling) inside, plus Inspect.
  * The keyed slot hands us every bash call, so this row must render for all of
  * them; only the chrome around the block is hand-rolled. */
-function TerminalCard({ toolName, block, cwd, home, inspect }: McpDiffRowProps) {
+function TerminalCard({ toolName, block, cwd, home, inspect, t }: McpDiffRowProps) {
   const card = terminalCardProps(block, cwd, home)
   const command = card?.command ?? bashCommandOf(block) ?? ''
   const description = bashDescriptionOf(block)
@@ -703,7 +753,7 @@ function TerminalCard({ toolName, block, cwd, home, inspect }: McpDiffRowProps) 
         </span>
       </summary>
       <div style={{ padding: '0 14px 12px' }}>
-        {card !== null && <TerminalBlock {...card} />}
+        {card !== null && <TerminalBlock {...card} labels={t === undefined ? undefined : terminalBlockLabels(t)} />}
         {inspect !== undefined && (
           <button type="button" onClick={inspect} style={{
             marginTop: 8,
@@ -776,8 +826,11 @@ export function apply(ctx: Context): void {
       yield ctx.slots.register({ name: 'tool.call.toolview', key, priority: -1 }, McpDiffRow)
     }
     // bash-toolview-sample owns `bash` at priority 0; shadow like edit/write.
+    // `locale:` puts the framework-synthesized `t` seat on BashRow props, so
+    // the terminal card labels follow the GUI language instead of the
+    // primitive's Chinese DEFAULT_LABELS.
     yield ctx.slots.register(
-      { name: 'tool.call.toolview', key: 'bash', priority: -1 },
+      { name: 'tool.call.toolview', key: 'bash', priority: -1, locale: 'conversation' },
       BashRow,
     )
   })
