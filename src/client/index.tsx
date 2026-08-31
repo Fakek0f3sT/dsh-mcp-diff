@@ -513,29 +513,24 @@ function rowState(block: ToolCallBlock): RowState {
   return 'ok'
 }
 
-/** The collapsed-row status signal: a StateDot in the state's color (ongoing
- * chase while running, solid green on a clean exit, red on a failing exit or
- * an execution error, amber when interrupted), paired with a
- * visually-hidden text label — StateDot is aria-hidden, so the screen-reader
- * status lives in the sibling span (the core's bash row posture). Neutral
- * (a background ack) shows the terminal icon: no outcome exists to color. */
+/** The collapsed-row status signal: just the dot, no text. A StateDot in
+ * the state's color (ongoing chase while running, solid green on a clean
+ * exit, red on a failing exit or an execution error, amber when
+ * interrupted). StateDot is aria-hidden, so the wrapper's role=img +
+ * aria-label carries the status to screen readers without rendering
+ * anything. Neutral (a background ack) shows the terminal icon: no outcome
+ * exists to color. */
 function StateBadge({ state }: { state: RowState }): ReactNode {
+  if (state === 'neutral') return <IconApiOutline14 size={14} />
   const dot = state === 'running' ? <StateDot state="ongoing" />
     : state === 'ok' ? <StateDot state="done" />
       : state === 'error' ? <StateDot state="error" />
-        : state === 'stopped' ? <StateDot state="warning" />
-          : <IconApiOutline14 size={14} />
+        : <StateDot state="warning" />
   const label = state === 'running' ? 'running'
     : state === 'error' ? 'failed'
       : state === 'stopped' ? 'stopped'
-        : state === 'neutral' ? null
-          : 'done'
-  return (
-    <>
-      {dot}
-      {label !== null && <span className="dsh-mcp-diff-status">{label}</span>}
-    </>
-  )
+        : 'done'
+  return <span role="img" aria-label={label}>{dot}</span>
 }
 
 /** Diff lines derivable from a parsed bash command: replace pairs LCS-unified,
@@ -753,8 +748,6 @@ function ensureCardStyle(): void {
   style.textContent = [
     '.dsh-mcp-diff-chev{transition:transform .15s ease;color:var(--dsw-alias-label-tertiary)}',
     'details[open]>summary .dsh-mcp-diff-chev{transform:rotate(90deg)}',
-    // Screen-reader status text next to the aria-hidden StateDot.
-    '.dsh-mcp-diff-status{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}',
   ].join('\n')
   document.head.appendChild(style)
 }
