@@ -5,3 +5,5 @@ lib/
 DIFF_TEST.txt
 BUILTIN_TEST.txt
 graphflow-out/
+TODO.md
+PROGRESS.md
