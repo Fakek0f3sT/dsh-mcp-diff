@@ -319,16 +319,18 @@ const FILL: Record<DiffLineKind, string | undefined> = {
  * the open/closed state (no JS) — `<summary>` shows the path + `+N -M` count and
  * toggles the diff body on click. `badge` annotates non-tool mutations (bash);
  * `children` render after the diff lines (command/output for bash cards). */
-function UnifiedDiff({ path, lines, added, removed, badge, children }: {
+function UnifiedDiff({ path, lines, added, removed, badge, state, children }: {
   path: string | null
   lines: DiffLine[]
   added: number
   removed: number
   badge?: string
+  /** Collapsed-row outcome; a badge renders in the summary when present. */
+  state?: RowState
   children?: ReactNode
 }) {
   return (
-    <details style={{
+    <details data-state={state !== undefined ? state : undefined} style={{
       margin: '16px 0',
       background: 'var(--dsw-alias-markdown-code-block)',
       borderRadius: 12,
@@ -348,6 +350,13 @@ function UnifiedDiff({ path, lines, added, removed, badge, children }: {
         <span style={{ display: 'flex', flexShrink: 0, alignSelf: 'center' }}>
           <IconChevronDownOutline14 className="dsh-mcp-diff-chev" />
         </span>
+        {/* Outcome badge: fixed 14px slot so the summary text and the
+            running→done swap never shift the row layout. */}
+        {state !== undefined && (
+          <span style={{ display: 'flex', width: 14, flexShrink: 0, alignSelf: 'center', justifyContent: 'center' }}>
+            <StateBadge state={state} />
+          </span>
+        )}
         {path !== null && (
           <span style={{
             fontWeight: 600,
@@ -474,6 +483,61 @@ function bashDescriptionOf(block: ToolCallBlock): string | null {
   return args !== null && typeof args.description === 'string' ? args.description : null
 }
 
+/** Collapsed-row outcome states, mirroring the core's ToolRowState one-to-one
+ * for the subset this plugin can derive from the raw block; `neutral` is the
+ * background-ack case, where the block honestly carries no command outcome. */
+type RowState = 'running' | 'ok' | 'error' | 'stopped' | 'neutral'
+
+/** Derive the collapsed-row outcome from the raw block, the bash-row analogue
+ * of ui-tool's toolRowModel: running until a result settles; error when the
+ * settled result view carries a failing exit status (non-zero code or a
+ * signal), when a view-less result settled isError, or when the call itself
+ * failed; stopped when the call was interrupted; neutral for a background
+ * ack (the settled block carries a job id, not a command outcome — the run
+ * lives on in the jobs panel, so neither green nor red is honest); ok
+ * otherwise (a clean exit 0). `kind` in block discriminates running vs
+ * settled.
+ * @param block - the raw tool-call block off the snapshot.
+ * @returns the outcome state for the collapsed row. */
+function rowState(block: ToolCallBlock): RowState {
+  if (!('kind' in block)) return 'running'
+  const error = (block as { error?: { code?: unknown } | undefined }).error
+  if (error?.code === 'interrupted') return 'stopped'
+  if ((block as { isError?: unknown }).isError === true) return 'error'
+  const result = block.resultView !== null && block.resultView.card === 'terminal' ? block.resultView : null
+  if (result === null && argsRecordOf(block)?.run_in_background === true) return 'neutral'
+  if (result !== null
+    && ((result.exitCode !== undefined && result.exitCode !== 0) || result.signal !== undefined)) {
+    return 'error'
+  }
+  return 'ok'
+}
+
+/** The collapsed-row status signal: a StateDot in the state's color (ongoing
+ * chase while running, solid green on a clean exit, red on a failing exit or
+ * an execution error, amber when interrupted), paired with a
+ * visually-hidden text label — StateDot is aria-hidden, so the screen-reader
+ * status lives in the sibling span (the core's bash row posture). Neutral
+ * (a background ack) shows the terminal icon: no outcome exists to color. */
+function StateBadge({ state }: { state: RowState }): ReactNode {
+  const dot = state === 'running' ? <StateDot state="ongoing" />
+    : state === 'ok' ? <StateDot state="done" />
+      : state === 'error' ? <StateDot state="error" />
+        : state === 'stopped' ? <StateDot state="warning" />
+          : <IconApiOutline14 size={14} />
+  const label = state === 'running' ? 'running'
+    : state === 'error' ? 'failed'
+      : state === 'stopped' ? 'stopped'
+        : state === 'neutral' ? null
+          : 'done'
+  return (
+    <>
+      {dot}
+      {label !== null && <span className="dsh-mcp-diff-status">{label}</span>}
+    </>
+  )
+}
+
 /** Diff lines derivable from a parsed bash command: replace pairs LCS-unified,
  * heredoc write bodies as add rows. Path-only shapes yield no lines. */
 function bashLines(edit: BashEdit): { lines: DiffLine[]; added: number; removed: number } {
@@ -516,6 +580,7 @@ function BashEditCard({ edit, command, block, cwd }: { edit: BashEdit; command: 
   const view = bashLines(edit)
   const out = resultTextOf(block)
   const tail = out === '' ? '' : out.split('\n').slice(-31).join('\n')
+  const state = rowState(block)
   return (
     <UnifiedDiff
       path={edit.files.length > 0 ? displayPath(edit.files[0], cwd) : null}
@@ -523,10 +588,16 @@ function BashEditCard({ edit, command, block, cwd }: { edit: BashEdit; command: 
       added={view.added}
       removed={view.removed}
       badge={bashKindBadge(edit)}
+      state={state}
     >
       {edit.files.length > 1 && (
         <div style={{ fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', margin: '6px 0 2px' }}>
           {`also touches: ${edit.files.slice(1).map((f) => displayPath(f, cwd)).join(', ')}`}
+        </div>
+      )}
+      {state === 'running' && (
+        <div style={{ fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', margin: '6px 0 2px' }}>
+          command still running — output will appear when it settles
         </div>
       )}
       <div style={{ fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', margin: '6px 0 2px' }}>
@@ -601,14 +672,9 @@ function TerminalCard({ toolName, block, cwd, home, inspect }: McpDiffRowProps) 
   const command = card?.command ?? bashCommandOf(block) ?? ''
   const description = bashDescriptionOf(block)
   const summary = description ?? (command !== '' ? command.split('\n')[0] : null)
-  const failed = card !== null && card.running !== true
-    && ((card.exitCode !== undefined && card.exitCode !== 0) || card.signal !== undefined)
-  // A view-less settled block carries no exit material; its isError flag is
-  // the row's only failure signal (mirrors the core's terminalFailed arm).
-  const resultError = card !== null && card.running !== true && card.exitCode === undefined && card.signal === undefined
-    && (block as { isError?: boolean }).isError === true
+  const state = rowState(block)
   return (
-    <details style={{
+    <details data-state={state} style={{
       margin: '16px 0',
       background: 'var(--dsw-alias-markdown-code-block)',
       borderRadius: 12,
@@ -623,7 +689,9 @@ function TerminalCard({ toolName, block, cwd, home, inspect }: McpDiffRowProps) 
         alignItems: 'center',
         overflow: 'hidden',
       }}>
-        {failed ? <StateDot state="error" /> : <IconApiOutline14 size={14} />}
+        <span style={{ display: 'flex', width: 14, flexShrink: 0, alignSelf: 'center', justifyContent: 'center' }}>
+          <StateBadge state={state} />
+        </span>
         <span style={{ fontWeight: 600, flexShrink: 0 }}>
           {toolName.charAt(0).toUpperCase() + toolName.slice(1)}
         </span>
@@ -685,6 +753,8 @@ function ensureCardStyle(): void {
   style.textContent = [
     '.dsh-mcp-diff-chev{transition:transform .15s ease;color:var(--dsw-alias-label-tertiary)}',
     'details[open]>summary .dsh-mcp-diff-chev{transform:rotate(90deg)}',
+    // Screen-reader status text next to the aria-hidden StateDot.
+    '.dsh-mcp-diff-status{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}',
   ].join('\n')
   document.head.appendChild(style)
 }

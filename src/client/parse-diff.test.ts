@@ -142,4 +142,35 @@ assert.equal(l.added, 1)
 assert.equal(l.lines[0].text, 'ctx1')
 assert.equal(l.lines[3].text, 'ctx2')
 
+// --- rowState: the collapsed-row outcome (bash status dot) -------------------
+// Mirrors index.tsx; keep in sync. `kind` discriminates running vs settled;
+// interrupted → stopped; isError or a failing terminal exit → error;
+// background ack → neutral (the block carries a job id, not an outcome);
+// else ok. Fixtures pass parsed `args` directly — index.tsx reads the same
+// record through argsRawOf/argsRecordOf, which the raw-string fixtures would
+// only exercise through JSON.parse (covered by parse-bash cases).
+function rowState(block) {
+  if (!('kind' in block)) return 'running'
+  const error = block.error
+  if (error?.code === 'interrupted') return 'stopped'
+  if (block.isError === true) return 'error'
+  const result = block.resultView !== null && block.resultView.card === 'terminal' ? block.resultView : null
+  if (result === null && block.args?.run_in_background === true) return 'neutral'
+  if (result !== null
+    && ((result.exitCode !== undefined && result.exitCode !== 0) || result.signal !== undefined)) {
+    return 'error'
+  }
+  return 'ok'
+}
+
+assert.equal(rowState({ callView: null }), 'running', 'no kind → running')
+assert.equal(rowState({ kind: 'x', resultView: null, error: { code: 'interrupted' } }), 'stopped', 'interrupted → stopped')
+assert.equal(rowState({ kind: 'x', resultView: null, isError: true }), 'error', 'viewless isError → error')
+assert.equal(rowState({ kind: 'x', resultView: { card: 'terminal', exitCode: 0 } }), 'ok', 'exit 0 → ok')
+assert.equal(rowState({ kind: 'x', resultView: { card: 'terminal', exitCode: 1 } }), 'error', 'exit 1 → error')
+assert.equal(rowState({ kind: 'x', resultView: { card: 'terminal', exitCode: 0, signal: 'SIGKILL' } }), 'error', 'signal → error')
+assert.equal(rowState({ kind: 'x', resultView: { card: 'generic' }, args: { run_in_background: true } }), 'neutral', 'background ack → neutral')
+assert.equal(rowState({ kind: 'x', resultView: { card: 'generic' } }), 'ok', 'generic view without background ack → ok')
+assert.equal(rowState({ kind: 'x', resultView: { card: 'terminal', exitCode: 0 }, args: { run_in_background: true } }), 'ok', 'foreground terminal result wins over ack-shaped args')
+
 console.log('parse-diff self-check ok')
