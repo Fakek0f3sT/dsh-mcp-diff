@@ -70,7 +70,19 @@ typecheck + both self-checks green before every commit.
 - One task = one branch off a fresh `main`; after green checks — merge
   `--ff-only` into `main` and push.
 - Version: only `npm version minor --no-git-tag-version` as one
-  `chore: release X.Y.Z` commit at the end of a batch of tasks. `npm publish`
-  is done **only by the user** (2FA).
+  `chore: release X.Y.Z` commit at the end of a batch of tasks.
+- **Release protocol (never skip)**: a release commit MUST be followed by the
+  full release routine, in this exact order:
+  1. push the release commit to `main` and wait for green CI on it;
+  2. tag the release commit `vX.Y.Z` (annotated) and push the tag;
+  3. create the matching GitHub Release from that tag with short release notes
+     (conventional-commit highlights since the previous release, in English);
+  4. ask the **user** to run `npm publish` (2FA — publishing is theirs, never
+     attempt it yourself) and wait for their confirmation;
+  5. after publishing, verify `npm view dsh-mcp-diff version` and link the
+     release notes to the npm page if the UI allows.
+  A release without a tag + GitHub Release + user publish is INCOMPLETE. If
+  releases drifted (tag or GitHub Release missing for an already-published
+  version), backfill tags/releases first, then proceed.
 - Do not rename the package (npm identity + the awesome-dsh catalogue entry).
 - Answer in Russian when the context is Russian-speaking.
