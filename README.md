@@ -4,7 +4,8 @@ A client plugin for the **DeepSeek Harness (Web GUI)** that renders every file
 mutation in the chat as **uniform diff cards** — collapsed by default, with
 per-line highlighting (green for additions, red for deletions).
 
-Covers the `filesystem` MCP server (`edit_file` / `write_file` / `move_file`),
+Covers the `filesystem` MCP server (`edit_file` / `write_file` / `move_file` /
+`create_directory`),
 the built-in DSH tools (`edit` / `write`), and file-mutating **bash** commands —
 one look for all of them.
 
@@ -27,8 +28,12 @@ The plugin:
 - also overrides the built-in `edit` / `write`, unifying their contextual hunks
   (a per-line LCS: shared lines read as neutral context instead of being
   doubled);
-- renders `move_file` as a compact informational card — `source → destination`,
-  both workspace-relative — since a rename carries no diff lines;
+- renders `move_file` and `create_directory` as compact informational cards —
+  `source → destination`, the created path, both workspace-relative — since
+  they carry no diff lines;
+- makes every card's path **openable**: a click hands it to the host's file
+  opener (the same channel the native tool rows use), which resolves it
+  against the session workspace and opens the file in your IDE/editor;
 - renders everything as one card built on a native `<details>` — **collapsed by
   default**, the header shows the path + `+N -M`, and it expands on click.
 
@@ -45,7 +50,11 @@ commands it can confidently parse as line mutations**:
   del/add lines and `+N -M` derived from those blocks;
 - **write** — `cat > f <<EOF`, `tee [-a] f <<EOF`, bare `> f` / `>> f`: the
   path always, the added lines when the content is spelled out in the command;
-- **in-place** — `sed -i` / `perl -pi` with explicit file tokens: the path only.
+- **in-place** — `sed -i` / `perl -pi` with explicit file tokens: the path only;
+- **path ops** — `mkdir`, `mv`, `cp`, `rm`, `touch` with literal path
+  arguments: an informational card naming the operation and its paths (no diff
+  lines exist for these). Anything non-literal — `$VAR`, globs, `cd`
+  chaining — keeps the plain terminal card.
 
 Every other bash call (`ls`, `git status`, builds, grep…) keeps a plain
 terminal-like card — it is never turned into a diff.
@@ -56,6 +65,15 @@ only the command text and its output (no filesystem access), so the diff is
 what the script **claims** to do, with the full command and the output tail
 one click away. Dynamic paths (`$VAR`, globs) and unsupported shapes are left
 unrendered on purpose: a missed card is better than a wrong one.
+
+## Open file links
+
+Every path a card shows — the diff header, a `move_file` destination, the
+paths of a bash mutation — is a link: clicking it calls the host's file
+opener (`openFile`), the same channel the native tool rows use. The host
+resolves the path against the session workspace (bash paths against the
+command's own working directory) and opens the file in your IDE/editor.
+A path without a workspace context (an unusual host setup) stays plain text.
 
 ## Install
 
@@ -104,8 +122,8 @@ npm install /path/to/dsh-mcp-diff
 
 The toolview keys are set for the server name `filesystem`. If your filesystem
 MCP server is named differently (the `serverName` field in the config), edit the
-key constants in `src/client/index.tsx` (`MCP_TOOL_KEYS`, `MCP_MOVE_FILE_KEY` —
-keys of the form `mcp__<serverName>__…`). The `edit` / `write` keys live there
+key constants in `src/client/index.tsx` (`MCP_TOOL_KEYS`, `MCP_MOVE_FILE_KEY`,
+`MCP_CREATE_DIR_KEY` — keys of the form `mcp__<serverName>__…`). The `edit` / `write` keys live there
 too — remove them if you do not want to override the built-in renderer.
 
 ## Development
