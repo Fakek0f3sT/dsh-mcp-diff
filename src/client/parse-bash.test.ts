@@ -107,6 +107,27 @@ check('print heredoc: null', parseBashEdit(`python3 - <<'EOF'\nprint(1)\nEOF`), 
 check('pairs w/o file: null', parseBashEdit(`python3 - <<'EOF'\nold = '''a'''\nnew = '''b'''\nprint(old, new)\nEOF`), null)
 check('pairs w/o replace: null', parseBashEdit(`python3 - <<'EOF'\np = Path("f.md")\nold = '''a'''\nnew = '''b'''\nprint(p)\nEOF`), null)
 
+// 7. Path operations: mv/cp/mkdir/rm/touch with literal path args.
+const mvOp = parseBashEdit(`mv old-name.md new-name.md`)
+check('mv: op', mvOp?.ops, [{ op: 'mv', args: ['old-name.md', 'new-name.md'] }])
+check('mv: files', mvOp?.files, ['old-name.md', 'new-name.md'])
+check('mv: no pairs', mvOp?.pairs, [])
+check('cp: op', parseBashEdit(`cp src/a.md dist/`)?.ops, [{ op: 'cp', args: ['src/a.md', 'dist/'] }])
+check('mkdir: chained ops', parseBashEdit(`mkdir -p src/a && mkdir src/b`)?.ops, [
+  { op: 'mkdir', args: ['src/a'] },
+  { op: 'mkdir', args: ['src/b'] },
+])
+check('rm: op', parseBashEdit(`rm -rf build`)?.ops, [{ op: 'rm', args: ['build'] }])
+check('touch: op', parseBashEdit(`touch .graphflow-cache/.keep`)?.ops, [{ op: 'touch', args: ['.graphflow-cache/.keep'] }])
+
+// 8. Path-op disqualifiers — anything non-literal keeps the terminal card.
+check('mv three args: null', parseBashEdit(`mv a.md b.md c/`), null)
+check('mkdir glob: null', parseBashEdit(`mkdir dist-*`), null)
+check('rm var: null', parseBashEdit(`rm $TMPDIR/f`), null)
+check('cd && mv: null', parseBashEdit(`cd build && mv a b`), null)
+check('ls path-like: null', parseBashEdit(`ls src/a.md`), null)
+check('write wins over ops', parseBashEdit(`echo hi > out.txt && mv out.txt done.txt`)?.writes.length, 1)
+
 if (failed > 0) {
   console.error(`parse-bash self-check FAILED (${failed})`)
   throw new Error(`parse-bash self-check FAILED (${failed})`) // nonzero exit without Node types

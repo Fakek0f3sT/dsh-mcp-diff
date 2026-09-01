@@ -14,6 +14,9 @@
  *   2. write   — `cat > f <<EOF`, `tee [-a] f <<EOF`, bare `> f` / `>> f`;
  *      a heredoc body yields add lines, otherwise only the path is known.
  *   3. in-place — `sed -i` / `perl -pi` with explicit file tokens (path only).
+ *   4. path ops — `mkdir`/`mv`/`cp`/`rm`/`touch` with literal path args;
+ *      informational (no diff derivable), parsed only when no line mutation
+ *      matched, so the two families never mix in one result.
  *
  * Everything else (ls, grep, git status, builds) parses as null on purpose.
  */
@@ -32,6 +35,13 @@ export interface BashEditWrite {
   append: boolean
 }
 
+/** A path operation (no line mutation): mv/cp/mkdir/rm/touch with literal
+ * arguments. Never mixed with pairs/writes/seds — see the header. */
+export interface BashPathOp {
+  op: 'mv' | 'cp' | 'mkdir' | 'rm' | 'touch'
+  args: string[]
+}
+
 /** A parsed file-mutating bash command. Empty arrays mean "not derivable". */
 export interface BashEdit {
   /** Every file the command touches, best guess, deduped, in discovery order. */
@@ -42,6 +52,9 @@ export interface BashEdit {
   writes: BashEditWrite[]
   /** Files rewritten in place by sed -i / perl -pi (no diff derivable). */
   seds: string[]
+  /** Path operations (mv/cp/mkdir/rm/touch); present only when the command
+   * performed no line mutation at all. */
+  ops: BashPathOp[]
 }
 
 interface Heredoc {
@@ -142,6 +155,34 @@ function inPlaceFiles(masked: string): string[] {
   return dedupe(pathLikeTokens(masked))
 }
 
+/** Command segments, split on `&&`, `;`, and newlines — each parsed alone. */
+function commandSegments(masked: string): string[] {
+  return masked.split(/&&|\n|;/).map((s) => s.trim()).filter((s) => s !== '')
+}
+
+/** A literal shell word this parser treats as a path: no quoting, globbing,
+ * variable/command expansion, or operators. Anything else disqualifies the
+ * whole command (it keeps its plain terminal card — a missed card beats a
+ * wrong one). */
+const LITERAL_PATH = /^[A-Za-z0-9_@=,.:+/-]+$/
+
+/** Path operations the command performs, one per segment. Any unrecognized
+ * word anywhere (including `cd`, which shifts the base every later path
+ * resolves against) disqualifies the whole command. */
+function pathOps(masked: string): BashPathOp[] {
+  const ops: BashPathOp[] = []
+  for (const segment of commandSegments(masked)) {
+    const words = segment.split(/\s+/)
+    const op = words[0] as BashPathOp['op']
+    if (op !== 'mv' && op !== 'cp' && op !== 'mkdir' && op !== 'rm' && op !== 'touch') return []
+    const args = words.slice(1).filter((w) => !w.startsWith('-'))
+    if (args.length === 0 || args.some((a) => !LITERAL_PATH.test(a))) return []
+    if ((op === 'mv' || op === 'cp') && args.length !== 2) return []
+    ops.push({ op, args })
+  }
+  return ops
+}
+
 /** Parse a bash command into the files it mutates, or null when it is not a
  * recognizable file mutation (the overwhelmingly common case). */
 export function parseBashEdit(command: string): BashEdit | null {
@@ -203,7 +244,13 @@ export function parseBashEdit(command: string): BashEdit | null {
   // 3. In-place rewrites via sed -i / perl -pi.
   const seds = inPlaceFiles(masked)
 
-  if (pairs.length === 0 && uniqueWrites.length === 0 && seds.length === 0) return null
+  // 4. Path operations — informational only, and only when nothing above
+  //    matched, so a line edit never renders as a path-op card.
+  if (pairs.length === 0 && uniqueWrites.length === 0 && seds.length === 0) {
+    const ops = pathOps(masked)
+    if (ops.length === 0) return null
+    return { files: dedupe(ops.flatMap((o) => o.args)), pairs, writes: uniqueWrites, seds, ops }
+  }
   const files = dedupe([...scriptFiles, ...uniqueWrites.map((w) => w.file), ...seds])
-  return { files, pairs, writes: uniqueWrites, seds }
+  return { files, pairs, writes: uniqueWrites, seds, ops: [] }
 }

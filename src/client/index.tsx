@@ -89,6 +89,10 @@ const MCP_TOOL_KEYS = [
  * row instead of McpDiffRow. */
 const MCP_MOVE_FILE_KEY = 'mcp__filesystem__move_file'
 
+/** MCP filesystem `create_directory` (args `{ path }`) — the same family:
+ * no diff, an informational row. */
+const MCP_CREATE_DIR_KEY = 'mcp__filesystem__create_directory'
+
 /** Built-in file tools — file-mutation-toolview owns these at priority 0;
  * shadow with a lower rank (ascending priority, lowest renders). */
 const BUILTIN_TOOL_KEYS = ['edit', 'write'] as const
@@ -539,6 +543,30 @@ function MoveFileRow({ toolName, block, cwd, openFile }: McpDiffRowProps) {
   )
 }
 
+/** The MCP filesystem `create_directory` call as an informational card —
+ * a directory creation has no diff lines, so the header path IS the content
+ * under a `mkdir` badge. Same shape as MoveFileRow: while args stream in
+ * (or a foreign shape) — the dim toolName row. */
+function CreateDirRow({ toolName, block, cwd, openFile }: McpDiffRowProps) {
+  const args = argsRecordOf(block)
+  const path = args !== null && typeof args.path === 'string' ? args.path : null
+  if (path === null) {
+    return <div style={{ opacity: 0.6, fontSize: 12 }}>{toolName}</div>
+  }
+  return (
+    <UnifiedDiff
+      path={displayPath(path, cwd)}
+      openPath={path}
+      openFile={openFile}
+      lines={[]}
+      added={0}
+      removed={0}
+      badge="mkdir"
+      state={rowState(block)}
+    />
+  )
+}
+
 function bashCommandOf(block: ToolCallBlock): string | null {
   const args = argsRecordOf(block)
   return args !== null && typeof args.command === 'string' ? args.command : null
@@ -622,6 +650,10 @@ function bashLines(edit: BashEdit): { lines: DiffLine[]; added: number; removed:
 }
 
 function bashKindBadge(edit: BashEdit): string {
+  if (edit.ops.length > 0) {
+    const kinds = [...new Set(edit.ops.map((o) => o.op))].join('+')
+    return `bash ${kinds}`
+  }
   const kinds = [
     edit.pairs.length > 0 ? 'replace' : null,
     edit.writes.length > 0 ? 'write' : null,
@@ -839,6 +871,8 @@ function BashRow(props: McpDiffRowProps) {
   const command = bashCommandOf(props.block)
   const edit = command === null ? null : parseBashEdit(command)
   if (edit === null || command === null) return <TerminalCard {...props} />
+  // Path ops (mv/cp/mkdir/rm/touch) render through the same card with zero
+  // diff lines: the summary names the op, the body lists the paths.
   return <BashEditCard edit={edit} command={command} block={props.block} cwd={props.cwd} openFile={props.openFile} />
 }
 
@@ -884,6 +918,8 @@ export function apply(ctx: Context): void {
     }
     // move_file: no diff to show — an informational source → destination card.
     yield ctx.slots.register({ name: 'tool.call.toolview', key: MCP_MOVE_FILE_KEY }, MoveFileRow)
+    // create_directory: same family — an informational header-path card.
+    yield ctx.slots.register({ name: 'tool.call.toolview', key: MCP_CREATE_DIR_KEY }, CreateDirRow)
     for (const key of BUILTIN_TOOL_KEYS) {
       yield ctx.slots.register({ name: 'tool.call.toolview', key, priority: -1 }, McpDiffRow)
     }
