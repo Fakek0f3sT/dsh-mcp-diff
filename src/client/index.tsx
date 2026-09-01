@@ -337,12 +337,28 @@ const FILL: Record<DiffLineKind, string | undefined> = {
   ctx: undefined,
 }
 
+/** The summary path as an open-file affordance: a real button calling the
+ * host's file opener (the same channel the native tool rows use — the host
+ * resolves the path against the session workspace and opens it in the user's
+ * IDE/editor). Click and Enter/Space never reach the <details> toggle,
+ * mirroring the core ToolRow's file-link behaviour. */
+function PathLink({ path, onOpen }: { path: string; onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      className="dsh-mcp-diff-filelink"
+      onClick={(event) => { event.stopPropagation(); onOpen() }}
+      onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') event.stopPropagation() }}
+    >{path}</button>
+  )
+}
+
 /** A colorized unified-diff card, collapsed by default so a run of file
  * mutations stays scannable in the chat flow. The native `<details>` carries
  * the open/closed state (no JS) — `<summary>` shows the path + `+N -M` count and
  * toggles the diff body on click. `badge` annotates non-tool mutations (bash);
  * `children` render after the diff lines (command/output for bash cards). */
-function UnifiedDiff({ path, lines, added, removed, badge, state, children }: {
+function UnifiedDiff({ path, lines, added, removed, badge, state, openPath, openFile, children }: {
   path: string | null
   lines: DiffLine[]
   added: number
@@ -350,6 +366,9 @@ function UnifiedDiff({ path, lines, added, removed, badge, state, children }: {
   badge?: string
   /** Collapsed-row outcome; a badge renders in the summary when present. */
   state?: RowState
+  /** The card's path spelled for the host opener, when it is openable. */
+  openPath?: string | null
+  openFile?: ((path: string) => void) | undefined
   children?: ReactNode
 }) {
   return (
@@ -381,12 +400,20 @@ function UnifiedDiff({ path, lines, added, removed, badge, state, children }: {
           </span>
         )}
         {path !== null && (
-          <span style={{
-            fontWeight: 600,
-            color: 'var(--dsw-alias-label-primary)',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-          }}>{path}</span>
+          openPath !== undefined && openPath !== null && openFile !== undefined
+            ? (
+              <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <PathLink path={path} onOpen={() => openFile(openPath)} />
+              </span>
+            )
+            : (
+              <span style={{
+                fontWeight: 600,
+                color: 'var(--dsw-alias-label-primary)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}>{path}</span>
+            )
         )}
         {badge !== undefined && (
           <span style={{ flexShrink: 0, color: 'var(--dsw-alias-label-tertiary)', fontSize: 11 }}>{badge}</span>
@@ -441,6 +468,9 @@ interface McpDiffRowProps {
   /** Session host home, so a terminal cwd equal to it collapses to `~`. */
   home?: string | undefined
   inspect?: () => void
+  /** Host file opener (the native tool rows' channel): resolves against the
+   * session cwd and opens in the user's IDE/editor. */
+  openFile?: ((path: string) => void) | undefined
   /** Conversation locale seat, present on the `bash` entry only (the one
    * registration declaring `locale:`); other rows render without it. */
   t?: TranslateNS<'conversation'> | undefined
@@ -461,11 +491,11 @@ function displayPath(path: string, cwd: string | undefined): string {
  *   - MCP `edit_file` (settled) → the server's unified diff (context + `@@`).
  *   - MCP running edit / any MCP write → a view from the call arguments.
  * A non-diffable payload shows a short note so the row is never blank. */
-function McpDiffRow({ toolName, block, cwd }: McpDiffRowProps) {
+function McpDiffRow({ toolName, block, cwd, openFile }: McpDiffRowProps) {
   const native = nativeDiffs(block)
   if (native !== null) {
     const view = viewFromNative(native)
-    return <UnifiedDiff path={displayPath(native[0].path, cwd)} lines={view.lines} added={view.added} removed={view.removed} />
+    return <UnifiedDiff path={displayPath(native[0].path, cwd)} openPath={native[0].path} openFile={openFile} lines={view.lines} added={view.added} removed={view.removed} />
   }
   const view = (toolName.endsWith('edit_file') ? parseServerDiff(resultTextOf(block)) : null)
     ?? viewFromArgs(toolName, block)
@@ -473,7 +503,7 @@ function McpDiffRow({ toolName, block, cwd }: McpDiffRowProps) {
     return <div style={{ opacity: 0.6, fontSize: 12 }}>{toolName}</div>
   }
   const argsPath = pathOf(block)
-  return <UnifiedDiff path={argsPath === null ? null : displayPath(argsPath, cwd)} lines={view.lines} added={view.added} removed={view.removed} />
+  return <UnifiedDiff path={argsPath === null ? null : displayPath(argsPath, cwd)} openPath={argsPath} openFile={openFile} lines={view.lines} added={view.added} removed={view.removed} />
 }
 
 /** The MCP filesystem `move_file` call as an informational card: a rename has
@@ -482,7 +512,7 @@ function McpDiffRow({ toolName, block, cwd }: McpDiffRowProps) {
  * Reusing UnifiedDiff buys the family style and the collapse chevron for
  * free. While args stream in (or for a foreign shape) — the same dim toolName
  * row McpDiffRow falls back to. */
-function MoveFileRow({ toolName, block, cwd }: McpDiffRowProps) {
+function MoveFileRow({ toolName, block, cwd, openFile }: McpDiffRowProps) {
   const args = argsRecordOf(block)
   const source = args !== null && typeof args.source === 'string' ? args.source : null
   const destination = args !== null && typeof args.destination === 'string' ? args.destination : null
@@ -492,13 +522,18 @@ function MoveFileRow({ toolName, block, cwd }: McpDiffRowProps) {
   return (
     <UnifiedDiff
       path={displayPath(source, cwd)}
+      openPath={source}
+      openFile={openFile}
       lines={[]}
       added={0}
       removed={0}
       badge="move"
     >
       <div style={{ fontSize: 12, color: 'var(--dsw-alias-label-secondary)', margin: '6px 0 2px' }}>
-        {`→ ${displayPath(destination, cwd)}`}
+        {'→ '}
+        {openFile !== undefined
+          ? <PathLink path={displayPath(destination, cwd)} onOpen={() => openFile(destination)} />
+          : displayPath(destination, cwd)}
       </div>
     </UnifiedDiff>
   )
@@ -602,14 +637,25 @@ function bashKindBadge(edit: BashEdit): string {
  * The header always shows the first file; a multi-file command lists the
  * remaining paths in the body (for line-less cards — sed/redirect — that list
  * is the whole mutation picture besides command/output). */
-function BashEditCard({ edit, command, block, cwd }: { edit: BashEdit; command: string; block: ToolCallBlock; cwd?: string | undefined }) {
+function BashEditCard({ edit, command, block, cwd, openFile }: { edit: BashEdit; command: string; block: ToolCallBlock; cwd?: string | undefined; openFile?: ((path: string) => void) | undefined }) {
   const view = bashLines(edit)
+  // Open base for the command's file paths: the terminal call's working
+  // directory when present (it may be session-relative), else the session
+  // workspace itself — then every path resolves the way the host opener does.
+  const call = block.callView !== null && block.callView.card === 'terminal' ? block.callView : null
+  const base = call !== null && typeof call.cwd === 'string' && call.cwd !== ''
+    ? (cwd === undefined ? call.cwd : resolveWorkspacePath(cwd, call.cwd))
+    : undefined
+  const toOpen = (file: string): string =>
+    base === undefined ? file : resolveWorkspacePath(base, file)
   const out = resultTextOf(block)
   const tail = out === '' ? '' : out.split('\n').slice(-31).join('\n')
   const state = rowState(block)
   return (
     <UnifiedDiff
       path={edit.files.length > 0 ? displayPath(edit.files[0], cwd) : null}
+      openPath={edit.files.length > 0 ? toOpen(edit.files[0]) : null}
+      openFile={openFile}
       lines={view.lines}
       added={view.added}
       removed={view.removed}
@@ -618,7 +664,15 @@ function BashEditCard({ edit, command, block, cwd }: { edit: BashEdit; command: 
     >
       {edit.files.length > 1 && (
         <div style={{ fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', margin: '6px 0 2px' }}>
-          {`also touches: ${edit.files.slice(1).map((f) => displayPath(f, cwd)).join(', ')}`}
+          {'also touches: '}
+          {edit.files.slice(1).map((f, i) => (
+            <span key={f}>
+              {i > 0 && ', '}
+              {openFile !== undefined
+                ? <PathLink path={displayPath(f, cwd)} onOpen={() => openFile(toOpen(f))} />
+                : displayPath(f, cwd)}
+            </span>
+          ))}
         </div>
       )}
       {state === 'running' && (
@@ -785,7 +839,7 @@ function BashRow(props: McpDiffRowProps) {
   const command = bashCommandOf(props.block)
   const edit = command === null ? null : parseBashEdit(command)
   if (edit === null || command === null) return <TerminalCard {...props} />
-  return <BashEditCard edit={edit} command={command} block={props.block} cwd={props.cwd} />
+  return <BashEditCard edit={edit} command={command} block={props.block} cwd={props.cwd} openFile={props.openFile} />
 }
 
 /** Services this browser half reads; activation waits on the slot service. */
@@ -803,6 +857,9 @@ function ensureCardStyle(): void {
   style.textContent = [
     '.dsh-mcp-diff-chev{transition:transform .15s ease;color:var(--dsw-alias-label-tertiary)}',
     'details[open]>summary .dsh-mcp-diff-chev{transform:rotate(90deg)}',
+    // The summary path as an open-file link: the core ToolRow fileLink look.
+    '.dsh-mcp-diff-filelink{margin:0;padding:0;border:none;background:none;font:inherit;color:inherit;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:pre;text-decoration:underline;text-decoration-color:var(--dsw-alias-label-quaternary);text-underline-offset:3px;cursor:pointer}',
+    '.dsh-mcp-diff-filelink:hover{color:var(--dsw-alias-label-primary);text-decoration-color:currentColor}',
   ].join('\n')
   document.head.appendChild(style)
 }
