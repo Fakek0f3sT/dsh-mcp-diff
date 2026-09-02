@@ -38,6 +38,8 @@ modules) must not be imported. Local modules (`./parse-bash`) are fine.
 | `src/client/parse-bash.ts` | pure bash-mutation detector (+ `BashEdit` types) |
 | `src/client/parse-bash.test.ts` | detector self-check (imports parse-bash) |
 | `src/client/parse-diff.test.ts` | server-diff parser self-check (a mirror of the index.tsx code — keep in sync when the parser changes) |
+| `src/client/paths.ts` | workspace-containment gate for openFile links (pure, no platform imports) |
+| `src/client/paths.test.ts` | path-containment self-check (imports paths) |
 | `cordis.patch.yml` | `tool.call.toolview` declaration + default inject target |
 | `tsdown.config.ts` | client bundle build |
 | `docs/screenshot.png` | README screenshot |
@@ -48,7 +50,7 @@ modules) must not be imported. Local modules (`./parse-bash`) are fine.
 npm install
 npm run build        # tsc -p tsconfig.build.json && tsdown  (lib/client.js)
 npm run typecheck    # tsc --noEmit (includes tests)
-npm run test         # both self-checks (tsx is now in devDependencies)
+npm run test         # the self-checks (tsx is now in devDependencies)
 ```
 
 Self-checks print `… self-check ok` and exit 0, or the names of failing
@@ -62,7 +64,7 @@ reason — the plugin carries no `@types/node` (the older test is wrapped in
 repository**: `npm run build` + a GUI page refresh = the live result. **Never
 restart `dsh web`** (it would kill the session). The agent has no browser —
 the final visual check is done by a human; the agent must get build +
-typecheck + both self-checks green before every commit.
+typecheck + the self-checks green before every commit.
 
 ## Conventions
 

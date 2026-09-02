@@ -138,7 +138,7 @@ too — remove them if you do not want to override the built-in renderer.
 ```bash
 npm install
 npm run build
-npm run test   # both self-checks (bash-mutation parser + diff parser) via tsx
+npm run test   # the self-checks (bash-mutation, diff, path-containment) via tsx
 ```
 
 ## Compatibility
