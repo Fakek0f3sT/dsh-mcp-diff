@@ -27,7 +27,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json && tsdown",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx src/client/parse-bash.test.ts && node --import tsx src/client/parse-diff.test.ts",
+    "test": "node --import tsx src/client/parse-bash.test.ts && node --import tsx src/client/parse-diff.test.ts && node --import tsx src/client/paths.test.ts",
     "prepare": "npm run build"
   },
   "dsh": {

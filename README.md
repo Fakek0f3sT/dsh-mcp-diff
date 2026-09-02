@@ -73,7 +73,11 @@ paths of a bash mutation — is a link: clicking it calls the host's file
 opener (`openFile`), the same channel the native tool rows use. The host
 resolves the path against the session workspace (bash paths against the
 command's own working directory) and opens the file in your IDE/editor.
-A path without a workspace context (an unusual host setup) stays plain text.
+A path without a workspace context (an unusual host setup) stays plain text,
+and so does any path that would resolve **outside** the session workspace —
+an absolute or `~` target parsed out of a bash command, `..` traversal, a
+bash call working outside the workspace. Rendered content never triggers an
+open of an arbitrary host file.
 
 ## Install
 

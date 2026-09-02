@@ -68,6 +68,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 import { parseBashEdit, type BashEdit } from './parse-bash'
+import { containedOpenPath } from './paths'
 
 /** Wire tool names this plugin owns:
  *   - MCP filesystem server (`mcp__<serverName>__…`) — has no diff view, so it
@@ -499,7 +500,7 @@ function McpDiffRow({ toolName, block, cwd, openFile }: McpDiffRowProps) {
   const native = nativeDiffs(block)
   if (native !== null) {
     const view = viewFromNative(native)
-    return <UnifiedDiff path={displayPath(native[0].path, cwd)} openPath={native[0].path} openFile={openFile} lines={view.lines} added={view.added} removed={view.removed} />
+    return <UnifiedDiff path={displayPath(native[0].path, cwd)} openPath={containedOpenPath(native[0].path, undefined, cwd)} openFile={openFile} lines={view.lines} added={view.added} removed={view.removed} />
   }
   const view = (toolName.endsWith('edit_file') ? parseServerDiff(resultTextOf(block)) : null)
     ?? viewFromArgs(toolName, block)
@@ -507,7 +508,7 @@ function McpDiffRow({ toolName, block, cwd, openFile }: McpDiffRowProps) {
     return <div style={{ opacity: 0.6, fontSize: 12 }}>{toolName}</div>
   }
   const argsPath = pathOf(block)
-  return <UnifiedDiff path={argsPath === null ? null : displayPath(argsPath, cwd)} openPath={argsPath} openFile={openFile} lines={view.lines} added={view.added} removed={view.removed} />
+  return <UnifiedDiff path={argsPath === null ? null : displayPath(argsPath, cwd)} openPath={argsPath === null ? null : containedOpenPath(argsPath, undefined, cwd)} openFile={openFile} lines={view.lines} added={view.added} removed={view.removed} />
 }
 
 /** The MCP filesystem `move_file` call as an informational card: a rename has
@@ -523,10 +524,11 @@ function MoveFileRow({ toolName, block, cwd, openFile }: McpDiffRowProps) {
   if (source === null || destination === null) {
     return <div style={{ opacity: 0.6, fontSize: 12 }}>{toolName}</div>
   }
+  const destOpen = containedOpenPath(destination, undefined, cwd)
   return (
     <UnifiedDiff
       path={displayPath(source, cwd)}
-      openPath={source}
+      openPath={containedOpenPath(source, undefined, cwd)}
       openFile={openFile}
       lines={[]}
       added={0}
@@ -535,8 +537,8 @@ function MoveFileRow({ toolName, block, cwd, openFile }: McpDiffRowProps) {
     >
       <div style={{ fontSize: 12, color: 'var(--dsw-alias-label-secondary)', margin: '6px 0 2px' }}>
         {'→ '}
-        {openFile !== undefined
-          ? <PathLink path={displayPath(destination, cwd)} onOpen={() => openFile(destination)} />
+        {openFile !== undefined && destOpen !== null
+          ? <PathLink path={displayPath(destination, cwd)} onOpen={() => openFile(destOpen)} />
           : displayPath(destination, cwd)}
       </div>
     </UnifiedDiff>
@@ -556,7 +558,7 @@ function CreateDirRow({ toolName, block, cwd, openFile }: McpDiffRowProps) {
   return (
     <UnifiedDiff
       path={displayPath(path, cwd)}
-      openPath={path}
+      openPath={containedOpenPath(path, undefined, cwd)}
       openFile={openFile}
       lines={[]}
       added={0}
@@ -673,13 +675,12 @@ function BashEditCard({ edit, command, block, cwd, openFile }: { edit: BashEdit;
   const view = bashLines(edit)
   // Open base for the command's file paths: the terminal call's working
   // directory when present (it may be session-relative), else the session
-  // workspace itself — then every path resolves the way the host opener does.
+  // workspace itself. containedOpenPath resolves base against the workspace,
+  // then gates the result — a path parsed out of command text may only become
+  // a link when it stays inside the session workspace.
   const call = block.callView !== null && block.callView.card === 'terminal' ? block.callView : null
-  const base = call !== null && typeof call.cwd === 'string' && call.cwd !== ''
-    ? (cwd === undefined ? call.cwd : resolveWorkspacePath(cwd, call.cwd))
-    : undefined
-  const toOpen = (file: string): string =>
-    base === undefined ? file : resolveWorkspacePath(base, file)
+  const base = call !== null && typeof call.cwd === 'string' && call.cwd !== '' ? call.cwd : undefined
+  const toOpen = (file: string): string | null => containedOpenPath(file, base, cwd)
   const out = resultTextOf(block)
   const tail = out === '' ? '' : out.split('\n').slice(-31).join('\n')
   const state = rowState(block)
@@ -697,14 +698,17 @@ function BashEditCard({ edit, command, block, cwd, openFile }: { edit: BashEdit;
       {edit.files.length > 1 && (
         <div style={{ fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', margin: '6px 0 2px' }}>
           {'also touches: '}
-          {edit.files.slice(1).map((f, i) => (
-            <span key={f}>
-              {i > 0 && ', '}
-              {openFile !== undefined
-                ? <PathLink path={displayPath(f, cwd)} onOpen={() => openFile(toOpen(f))} />
-                : displayPath(f, cwd)}
-            </span>
-          ))}
+          {edit.files.slice(1).map((f, i) => {
+            const open = toOpen(f)
+            return (
+              <span key={f}>
+                {i > 0 && ', '}
+                {openFile !== undefined && open !== null
+                  ? <PathLink path={displayPath(f, cwd)} onOpen={() => openFile(open)} />
+                  : displayPath(f, cwd)}
+              </span>
+            )
+          })}
         </div>
       )}
       {state === 'running' && (
