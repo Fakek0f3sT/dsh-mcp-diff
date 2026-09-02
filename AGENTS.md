@@ -40,6 +40,8 @@ modules) must not be imported. Local modules (`./parse-bash`) are fine.
 | `src/client/parse-diff.test.ts` | server-diff parser self-check (a mirror of the index.tsx code — keep in sync when the parser changes) |
 | `src/client/paths.ts` | workspace-containment gate for openFile links (pure, no platform imports) |
 | `src/client/paths.test.ts` | path-containment self-check (imports paths) |
+| `src/client/parse-risk.ts` | pure destructive-command risk tagger (annotation only, no mutation claim) |
+| `src/client/parse-risk.test.ts` | risk-tagger self-check (imports parse-risk) |
 | `cordis.patch.yml` | `tool.call.toolview` declaration + default inject target |
 | `tsdown.config.ts` | client bundle build |
 | `docs/screenshot.png` | README screenshot |

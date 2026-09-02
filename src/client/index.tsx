@@ -41,7 +41,7 @@ import type { ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
 import { resolveWorkspacePath } from '@deepseek-ai/dsh-client-runtime/client'
 import {
   IconApiOutline14, IconCheckOutline16, IconChevronDownOutline14, IconCopyOutline16,
-  StateDot, TerminalBlock, writeClipboard,
+  IconWarningOutline16, StateDot, TerminalBlock, writeClipboard,
   type TerminalBlockLabels, type TerminalBlockProps,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
@@ -70,6 +70,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 import { parseBashEdit, type BashEdit } from './parse-bash'
+import { riskTags } from './parse-risk'
 import { containedOpenPath } from './paths'
 
 /** Wire tool names this plugin owns:
@@ -983,6 +984,9 @@ function TerminalCard({ toolName, block, cwd, home, inspect, t }: McpDiffRowProp
   const description = bashDescriptionOf(args)
   const summary = description ?? (command !== '' ? command.split('\n')[0] : null)
   const state = rowState(block, args)
+  // Risk annotation, not a mutation claim: destructive signatures badge the
+  // collapsed row even when the command keeps its plain terminal card.
+  const risks = riskTags(command)
   return (
     <details data-state={state} style={{
       margin: '16px 0',
@@ -1012,6 +1016,19 @@ function TerminalCard({ toolName, block, cwd, home, inspect, t }: McpDiffRowProp
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
           }}>{summary}</span>
+        )}
+        {risks.length > 0 && (
+          <span style={{
+            display: 'flex',
+            flexShrink: 0,
+            alignItems: 'center',
+            gap: 4,
+            fontSize: 11,
+            color: 'var(--dsw-alias-state-warn-primary)',
+          }}>
+            <IconWarningOutline16 size={12} />
+            {risks.join(' · ')}
+          </span>
         )}
         <span style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex' }}>
           <IconChevronDownOutline14 className="dsh-mcp-diff-chev" />

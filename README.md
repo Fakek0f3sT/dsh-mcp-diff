@@ -60,7 +60,11 @@ commands it can confidently parse as line mutations**:
   chaining — keeps the plain terminal card.
 
 Every other bash call (`ls`, `git status`, builds, grep…) keeps a plain
-terminal-like card — it is never turned into a diff.
+terminal-like card — it is never turned into a diff. Such a card gains a small
+warning chip when the command matches an unambiguous destructive signature
+(`rm -rf`, `chmod 777`, `git reset --hard`, `git checkout .`, `git clean -f`,
+`curl … | sh`, `mkfs`, `dd of=`, `shred`) — an annotation of the command text,
+never a mutation claim.
 
 The card is marked **`bash edit`** and carries a footnote: *intended change
 parsed from the bash command — not an edit/MCP tool result*. The client sees
