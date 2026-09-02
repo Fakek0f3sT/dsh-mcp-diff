@@ -830,7 +830,7 @@ function bashKindBadge(edit: BashEdit): string {
  * The header always shows the first file; a multi-file command lists the
  * remaining paths in the body (for line-less cards — sed/redirect — that list
  * is the whole mutation picture besides command/output). */
-function BashEditCard({ edit, command, block, cwd, openFile, args }: { edit: BashEdit; command: string; block: ToolCallBlock; cwd?: string | undefined; openFile?: ((path: string) => void) | undefined; args?: Record<string, unknown> | null }) {
+function BashEditCard({ edit, command, block, cwd, openFile, inspect, args }: { edit: BashEdit; command: string; block: ToolCallBlock; cwd?: string | undefined; openFile?: ((path: string) => void) | undefined; inspect?: (() => void) | undefined; args?: Record<string, unknown> | null }) {
   const view = bashLines(edit)
   // Open base for the command's file paths: the terminal call's working
   // directory when present (it may be session-relative), else the session
@@ -904,6 +904,19 @@ function BashEditCard({ edit, command, block, cwd, openFile, args }: { edit: Bas
           <summary style={{ cursor: 'pointer', fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }}>output</summary>
           <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{tailShown}</pre>
         </details>
+      )}
+      {inspect !== undefined && (
+        <button type="button" onClick={inspect} style={{
+          marginTop: 8,
+          padding: '2px 10px',
+          font: 'inherit',
+          fontSize: 11,
+          color: 'var(--dsw-alias-label-secondary)',
+          background: 'transparent',
+          border: '1px solid var(--dsw-alias-label-tertiary)',
+          borderRadius: 8,
+          cursor: 'pointer',
+        }}>Inspect</button>
       )}
     </UnifiedDiff>
   )
@@ -1074,7 +1087,7 @@ function BashRow(props: McpDiffRowProps) {
   if (edit === null || command === null) return <TerminalCard {...props} />
   // Path ops (mv/cp/mkdir/rm/touch) render through the same card with zero
   // diff lines: the summary names the op, the body lists the paths.
-  return <BashEditCard edit={edit} command={command} block={props.block} cwd={props.cwd} openFile={props.openFile} args={args} />
+  return <BashEditCard edit={edit} command={command} block={props.block} cwd={props.cwd} openFile={props.openFile} inspect={props.inspect} args={args} />
 }
 
 /** Services this browser half reads; activation waits on the slot service. */
