@@ -1,13 +1,16 @@
 # dsh-mcp-diff
 
-A client plugin for the **DeepSeek Harness (Web GUI)** that renders every file
-mutation in the chat as **uniform diff cards** — collapsed by default, with
-per-line highlighting (green for additions, red for deletions).
+A client plugin for the **DeepSeek Harness (Web GUI)** that turns every file
+mutation it can confidently parse into a **uniform diff card** in the chat —
+collapsed by default, with per-line highlighting (green for additions, red for
+deletions).
 
 Covers the `filesystem` MCP server (`edit_file` / `write_file` / `move_file` /
 `create_directory`),
-the built-in DSH tools (`edit` / `write`), and file-mutating **bash** commands —
-one look for all of them.
+the built-in DSH tools (`edit` / `write`), and recognizable file-mutating
+**bash** commands — one look for all of them. Bash shapes the parser cannot
+confidently identify (`chmod`, `ln`, `rsync`, `dd`, `git` state changes, …)
+keep the plain terminal card: a missed card beats a wrong one.
 
 ![A diff card rendered by dsh-mcp-diff in the DeepSeek Harness web chat](docs/screenshot.png)
 
