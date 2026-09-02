@@ -68,7 +68,8 @@ assert.equal(parseServerDiff(''), null, 'empty → null')
 // Mirrors index.tsx; keep in sync. Only the branches this check exercises.
 function contentLines(text: string): string[] {
   if (text === '') return []
-  const body = text.endsWith('\n') ? text.slice(0, -1) : text
+  const flat = text.replace(/\r\n/g, '\n')
+  const body = flat.endsWith('\n') ? flat.slice(0, -1) : flat
   return body.split('\n')
 }
 function viewFromArgs(toolName: string, record: Record<string, unknown>): DiffView | null {
@@ -109,11 +110,22 @@ assert.equal(e.added, 2)
 
 // --- lcsLines: the built-in edit/write path (context lines dedup) ------------
 // Mirrors index.tsx; keep in sync.
+const LCS_CELL_LIMIT = 1_000_000
 function lcsLines(oldText: string, newText: string): DiffView {
   const a = contentLines(oldText)
   const b = contentLines(newText)
   const n = a.length
   const m = b.length
+  if (n * m > LCS_CELL_LIMIT) {
+    return {
+      lines: [
+        ...a.map((text): DiffLine => ({ kind: 'del', text })),
+        ...b.map((text): DiffLine => ({ kind: 'add', text })),
+      ],
+      added: m,
+      removed: n,
+    }
+  }
   const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0))
   for (let i = n - 1; i >= 0; i--)
     for (let j = m - 1; j >= 0; j--)
@@ -141,6 +153,19 @@ assert.equal(l.removed, 1)
 assert.equal(l.added, 1)
 assert.equal(l.lines[0].text, 'ctx1')
 assert.equal(l.lines[3].text, 'ctx2')
+
+// Past the dp-cell limit the LCS degenerates to del-all/add-all: counts stay
+// exact, context is dropped, and no giant table is allocated.
+const bigA = Array.from({ length: 1200 }, (_, i) => `old ${i}`).join('\n')
+const bigB = Array.from({ length: 1200 }, (_, i) => `new ${i}`).join('\n')
+const degenerate = lcsLines(bigA, bigB)
+assert.equal(degenerate.removed, 1200)
+assert.equal(degenerate.added, 1200)
+assert.deepEqual(degenerate.lines[0].kind, 'del')
+assert.deepEqual(degenerate.lines[1200].kind, 'add')
+
+// CRLF text renders without a CR glyph on the rows.
+assert.deepEqual(contentLines('a\r\nb\r\n'), ['a', 'b'])
 
 // --- rowState: the collapsed-row outcome (bash status dot) -------------------
 // Mirrors index.tsx; keep in sync. `kind` discriminates running vs settled;

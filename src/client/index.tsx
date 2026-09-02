@@ -162,7 +162,8 @@ interface DiffView {
  * (a terminator, not an extra blank line). Empty text is zero lines. */
 function contentLines(text: string): string[] {
   if (text === '') return []
-  const body = text.endsWith('\n') ? text.slice(0, -1) : text
+  const flat = text.replace(/\r\n/g, '\n')
+  const body = flat.endsWith('\n') ? flat.slice(0, -1) : flat
   return body.split('\n')
 }
 
@@ -530,7 +531,7 @@ function McpDiffRow({ toolName, block, cwd, openFile }: McpDiffRowProps) {
   const native = nativeDiffs(block)
   if (native !== null) {
     const view = viewFromNative(native)
-    return <UnifiedDiff path={displayPath(native[0].path, cwd)} openPath={containedOpenPath(native[0].path, undefined, cwd)} openFile={openFile} lines={view.lines} added={view.added} removed={view.removed} />
+    return <UnifiedDiff path={displayPath(native[0].path, cwd)} openPath={containedOpenPath(native[0].path, undefined, cwd)} openFile={openFile} lines={view.lines} added={view.added} removed={view.removed} state={rowState(block)} />
   }
   const view = (toolName.endsWith('edit_file') ? parseServerDiff(resultTextOf(block)) : null)
     ?? viewFromArgs(toolName, block)
@@ -538,7 +539,7 @@ function McpDiffRow({ toolName, block, cwd, openFile }: McpDiffRowProps) {
     return <div style={{ opacity: 0.6, fontSize: 12 }}>{toolName}</div>
   }
   const argsPath = pathOf(block)
-  return <UnifiedDiff path={argsPath === null ? null : displayPath(argsPath, cwd)} openPath={argsPath === null ? null : containedOpenPath(argsPath, undefined, cwd)} openFile={openFile} lines={view.lines} added={view.added} removed={view.removed} />
+  return <UnifiedDiff path={argsPath === null ? null : displayPath(argsPath, cwd)} openPath={argsPath === null ? null : containedOpenPath(argsPath, undefined, cwd)} openFile={openFile} lines={view.lines} added={view.added} removed={view.removed} state={rowState(block)} />
 }
 
 /** The MCP filesystem `move_file` call as an informational card: a rename has
@@ -564,6 +565,7 @@ function MoveFileRow({ toolName, block, cwd, openFile }: McpDiffRowProps) {
       added={0}
       removed={0}
       badge="move"
+      state={rowState(block)}
     >
       <div style={{ fontSize: 12, color: 'var(--dsw-alias-label-secondary)', margin: '6px 0 2px' }}>
         {'→ '}
@@ -599,14 +601,20 @@ function CreateDirRow({ toolName, block, cwd, openFile }: McpDiffRowProps) {
   )
 }
 
-function bashCommandOf(block: ToolCallBlock): string | null {
-  const args = argsRecordOf(block)
+function bashCommandOf(args: Record<string, unknown> | null): string | null {
   return args !== null && typeof args.command === 'string' ? args.command : null
 }
 
-function bashDescriptionOf(block: ToolCallBlock): string | null {
-  const args = argsRecordOf(block)
+function bashDescriptionOf(args: Record<string, unknown> | null): string | null {
   return args !== null && typeof args.description === 'string' ? args.description : null
+}
+
+/** The parsed args record, memoized on the raw args string: bash rows
+ * re-render on every streaming chunk, and re-parsing identical JSON per
+ * render burns the main thread for no new information. */
+function useArgs(block: ToolCallBlock): Record<string, unknown> | null {
+  const raw = argsRawOf(block)
+  return useMemo(() => argsRecordOf(block), [raw])
 }
 
 /** Collapsed-row outcome states, mirroring the core's ToolRowState one-to-one
@@ -625,13 +633,13 @@ type RowState = 'running' | 'ok' | 'error' | 'stopped' | 'neutral'
  * settled.
  * @param block - the raw tool-call block off the snapshot.
  * @returns the outcome state for the collapsed row. */
-function rowState(block: ToolCallBlock): RowState {
+function rowState(block: ToolCallBlock, args?: Record<string, unknown> | null): RowState {
   if (!('kind' in block)) return 'running'
   const error = (block as { error?: { code?: unknown } | undefined }).error
   if (error?.code === 'interrupted') return 'stopped'
   if ((block as { isError?: unknown }).isError === true) return 'error'
-  const result = block.resultView !== null && block.resultView.card === 'terminal' ? block.resultView : null
-  if (result === null && argsRecordOf(block)?.run_in_background === true) return 'neutral'
+  const result = block.resultView != null && block.resultView.card === 'terminal' ? block.resultView : null
+  if (result === null && (args ?? argsRecordOf(block))?.run_in_background === true) return 'neutral'
   if (result !== null
     && ((result.exitCode !== undefined && result.exitCode !== 0) || result.signal !== undefined)) {
     return 'error'
@@ -701,19 +709,29 @@ function bashKindBadge(edit: BashEdit): string {
  * The header always shows the first file; a multi-file command lists the
  * remaining paths in the body (for line-less cards — sed/redirect — that list
  * is the whole mutation picture besides command/output). */
-function BashEditCard({ edit, command, block, cwd, openFile }: { edit: BashEdit; command: string; block: ToolCallBlock; cwd?: string | undefined; openFile?: ((path: string) => void) | undefined }) {
+function BashEditCard({ edit, command, block, cwd, openFile, args }: { edit: BashEdit; command: string; block: ToolCallBlock; cwd?: string | undefined; openFile?: ((path: string) => void) | undefined; args?: Record<string, unknown> | null }) {
   const view = bashLines(edit)
   // Open base for the command's file paths: the terminal call's working
   // directory when present (it may be session-relative), else the session
   // workspace itself. containedOpenPath resolves base against the workspace,
   // then gates the result — a path parsed out of command text may only become
-  // a link when it stays inside the session workspace.
-  const call = block.callView !== null && block.callView.card === 'terminal' ? block.callView : null
+  // a link when it stays inside the session workspace. Links are suppressed
+  // when a `cd` shifted the base mid-command, and for dynamic targets
+  // (`$VAR`, globs): a wrong link is worse than no link.
+  const call = block.callView != null && block.callView.card === 'terminal' ? block.callView : null
   const base = call !== null && typeof call.cwd === 'string' && call.cwd !== '' ? call.cwd : undefined
-  const toOpen = (file: string): string | null => containedOpenPath(file, base, cwd)
+  const toOpen = (file: string): string | null => {
+    if (edit.cdShifted || /[$*?`]/.test(file)) return null
+    return containedOpenPath(file, base, cwd)
+  }
   const out = resultTextOf(block)
   const tail = out === '' ? '' : out.split('\n').slice(-31).join('\n')
-  const state = rowState(block)
+  const tailShown = tail.length > 4000 ? `…${tail.slice(-4000)}` : tail
+  const flatCommand = command.replace(/\r\n/g, '\n')
+  const commandShown = flatCommand.length > 20000 ? `…${flatCommand.slice(-20000)}` : flatCommand
+  const state = rowState(block, args)
+  const mixedWithOps = edit.ops.length > 0
+    && (edit.pairs.length > 0 || edit.writes.length > 0 || edit.seds.length > 0)
   return (
     <UnifiedDiff
       path={edit.files.length > 0 ? displayPath(edit.files[0], cwd) : null}
@@ -725,6 +743,12 @@ function BashEditCard({ edit, command, block, cwd, openFile }: { edit: BashEdit;
       badge={bashKindBadge(edit)}
       state={state}
     >
+      {mixedWithOps && (
+        <div style={{ fontSize: 11, color: 'var(--dsw-alias-state-error-primary)', margin: '6px 0 2px' }}>
+          {'also performs: '}
+          {edit.ops.map((o) => `${o.op} ${o.args.join(' ')}`).join('; ')}
+        </div>
+      )}
       {edit.files.length > 1 && (
         <div style={{ fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', margin: '6px 0 2px' }}>
           {'also touches: '}
@@ -751,12 +775,12 @@ function BashEditCard({ edit, command, block, cwd, openFile }: { edit: BashEdit;
       </div>
       <details style={{ marginTop: 2 }}>
         <summary style={{ cursor: 'pointer', fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }}>command</summary>
-        <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{command}</pre>
+        <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{commandShown}</pre>
       </details>
       {tail !== '' && (
         <details style={{ marginTop: 2 }}>
           <summary style={{ cursor: 'pointer', fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }}>output</summary>
-          <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{tail}</pre>
+          <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{tailShown}</pre>
         </details>
       )}
     </UnifiedDiff>
@@ -798,17 +822,17 @@ function terminalBlockLabels(t: TranslateNS<'conversation'>): TerminalBlockLabel
  * error without terminal material). There the raw block itself still names
  * the command (args) and its output (content text), so the card is assembled
  * from that instead of collapsing to an empty body. */
-function terminalCardProps(block: ToolCallBlock, sessionCwd: string | undefined, home: string | undefined): TerminalBlockProps | null {
-  const call = block.callView !== null && block.callView.card === 'terminal' ? block.callView : null
+function terminalCardProps(block: ToolCallBlock, sessionCwd: string | undefined, home: string | undefined, args: Record<string, unknown> | null): TerminalBlockProps | null {
+  const call = block.callView != null && block.callView.card === 'terminal' ? block.callView : null
   const cwd = call === null || call.cwd === undefined || call.cwd === ''
     ? sessionCwd
     : sessionCwd === undefined ? call.cwd : resolveWorkspacePath(sessionCwd, call.cwd)
   if (!('kind' in block)) {
     // Running without a call view: a view-less sub-call mid-flight. Keep the
     // terminal shape (command + running) so the row is honest about it.
-    return { command: call?.title ?? bashCommandOf(block) ?? '', cwd, home, running: true }
+    return { command: call?.title ?? bashCommandOf(args) ?? '', cwd, home, running: true }
   }
-  const result = block.resultView !== null && block.resultView.card === 'terminal' ? block.resultView : null
+  const result = block.resultView != null && block.resultView.card === 'terminal' ? block.resultView : null
   if (result !== null) {
     return {
       command: result.title ?? call?.title ?? '',
@@ -824,7 +848,7 @@ function terminalCardProps(block: ToolCallBlock, sessionCwd: string | undefined,
   // Empty output is preserved (TerminalBlock draws its own no-output state).
   const output = resultTextOf(block)
   return {
-    command: call?.title ?? bashCommandOf(block) ?? '',
+    command: call?.title ?? bashCommandOf(args) ?? '',
     cwd: call === null ? undefined : cwd,
     home,
     output: output === '' ? undefined : output,
@@ -838,11 +862,12 @@ function terminalCardProps(block: ToolCallBlock, sessionCwd: string | undefined,
  * The keyed slot hands us every bash call, so this row must render for all of
  * them; only the chrome around the block is hand-rolled. */
 function TerminalCard({ toolName, block, cwd, home, inspect, t }: McpDiffRowProps) {
-  const card = terminalCardProps(block, cwd, home)
-  const command = card?.command ?? bashCommandOf(block) ?? ''
-  const description = bashDescriptionOf(block)
+  const args = useArgs(block)
+  const card = terminalCardProps(block, cwd, home, args)
+  const command = card?.command ?? bashCommandOf(args) ?? ''
+  const description = bashDescriptionOf(args)
   const summary = description ?? (command !== '' ? command.split('\n')[0] : null)
-  const state = rowState(block)
+  const state = rowState(block, args)
   return (
     <details data-state={state} style={{
       margin: '16px 0',
@@ -902,7 +927,8 @@ function TerminalCard({ toolName, block, cwd, home, inspect, t }: McpDiffRowProp
  * every bash call, so the null path (no recognizable mutation) must still
  * render the whole row. */
 function BashRow(props: McpDiffRowProps) {
-  const command = bashCommandOf(props.block)
+  const args = useArgs(props.block)
+  const command = bashCommandOf(args)
   // Memoized on the command text: the row re-renders on every streaming chunk
   // of the call, and re-parsing a large command each time would burn the main
   // thread for no new information.
@@ -910,7 +936,7 @@ function BashRow(props: McpDiffRowProps) {
   if (edit === null || command === null) return <TerminalCard {...props} />
   // Path ops (mv/cp/mkdir/rm/touch) render through the same card with zero
   // diff lines: the summary names the op, the body lists the paths.
-  return <BashEditCard edit={edit} command={command} block={props.block} cwd={props.cwd} openFile={props.openFile} />
+  return <BashEditCard edit={edit} command={command} block={props.block} cwd={props.cwd} openFile={props.openFile} args={args} />
 }
 
 /** Services this browser half reads; activation waits on the slot service. */
