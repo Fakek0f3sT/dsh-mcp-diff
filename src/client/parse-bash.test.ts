@@ -126,7 +126,65 @@ check('mkdir glob: null', parseBashEdit(`mkdir dist-*`), null)
 check('rm var: null', parseBashEdit(`rm $TMPDIR/f`), null)
 check('cd && mv: null', parseBashEdit(`cd build && mv a b`), null)
 check('ls path-like: null', parseBashEdit(`ls src/a.md`), null)
-check('write wins over ops', parseBashEdit(`echo hi > out.txt && mv out.txt done.txt`)?.writes.length, 1)
+// Mixed command: the write stays the card's subject, the sibling op surfaces.
+const mixed = parseBashEdit(`echo hi > out.txt && mv out.txt done.txt`)
+check('mixed: write kept', mixed?.writes.length, 1)
+check('mixed: op surfaced', mixed?.ops, [{ op: 'mv', args: ['out.txt', 'done.txt'] }])
+check('mixed: files', mixed?.files, ['out.txt', 'done.txt'])
+check('mixed: cd flag', parseBashEdit(`cd build && cat > out.md <<EOF\nb\nEOF`)?.cdShifted, true)
+check('no cd: flag false', parseBashEdit(`cat > out.md <<EOF\nb\nEOF`)?.cdShifted, false)
+
+// 9. Quoted text and comments are not mutations (false-positive class).
+check('quoted redirect hint: null', parseBashEdit(`echo "please use cat > file.txt to write files"`), null)
+check('quoted two redirects: null', parseBashEdit(`echo "if a > b then echo done > log.txt"`), null)
+check('quoted tee hint: null', parseBashEdit(`echo "use tee out.txt to log"`), null)
+check('comment redirect: null', parseBashEdit(`echo start # see docs > README.md`), null)
+check('hash inside word stays', parseBashEdit(`echo a#b > real.txt`)?.writes[0]?.file, 'real.txt')
+check('quoted heredoc target: null', parseBashEdit(`cat > "my file.txt" <<EOF\nbody\nEOF`), null)
+// A quoted `<<` must not hide a real redirect on the same line.
+check('quoted << hides nothing', parseBashEdit(`echo 'a << b' > f.txt`)?.writes[0]?.file, 'f.txt')
+
+// 10. tee --append and /dev sinks.
+check('tee --append', parseBashEdit(`tee --append log.txt <<EOF\nx\nEOF`)?.writes[0]?.append, true)
+check('tee -a kept', parseBashEdit(`tee -a log.txt <<EOF\nx\nEOF`)?.writes[0]?.append, true)
+check('dev null bare: null', parseBashEdit(`echo x > /dev/null`), null)
+check('dev stderr: null', parseBashEdit(`echo x > /dev/stderr`), null)
+check('dev fd: null', parseBashEdit(`echo x > /dev/fd/3`), null)
+check('dev null heredoc: null', parseBashEdit(`cat > /dev/null <<EOF\nx\nEOF`), null)
+check('dev sda stays visible', parseBashEdit(`echo x > /dev/sda`)?.writes[0]?.file, '/dev/sda')
+check('sudo tee with dev sink', parseBashEdit(`sudo tee f.txt > /dev/null <<EOF\nx\nEOF`)?.writes[0]?.file, 'f.txt')
+
+// 11. fd-prefixed redirects.
+check('stderr write', parseBashEdit(`make build 2> build.err`)?.writes[0]?.file, 'build.err')
+check('stdout fd write', parseBashEdit(`echo x 1> out.txt`)?.writes[0]?.file, 'out.txt')
+check('fd append', parseBashEdit(`echo x 2>> err.log`)?.writes[0]?.append, true)
+check('fd to &1 ignored', parseBashEdit(`make build 2>&1`), null)
+check('rm with stderr sink', parseBashEdit(`rm -f old.log 2>/dev/null`)?.ops, [{ op: 'rm', args: ['old.log'] }])
+
+// 12. Two heredocs on one line: both bodies parse, no phantom writes.
+const two = parseBashEdit(`cat <<EOF > f.txt && cat <<EOF2 > g.txt\nbody1\nEOF\necho hacked > pwned.txt\nEOF2`)
+check('two heredocs: f', two?.writes.find((w) => w.file === 'f.txt')?.body, 'body1\n')
+check('two heredocs: g', two?.writes.find((w) => w.file === 'g.txt')?.body, 'echo hacked > pwned.txt\n')
+check('two heredocs: no phantom', two?.writes.some((w) => w.file === 'pwned.txt'), false)
+// Redirect after the marker on a heredoc line.
+check('redirect after marker', parseBashEdit(`cat <<EOF > out.txt\nhello\nEOF`)?.writes[0]?.file, 'out.txt')
+// Unrelated redirect later on a heredoc line is not swallowed.
+check('sibling redirect on marker line', parseBashEdit(`cat > f.txt <<EOF && echo done > g.txt\nbody\nEOF`)?.writes.some((w) => w.file === 'g.txt'), true)
+
+// 13. sed -i claims only its own segment's files.
+check('sed segment sweep', parseBashEdit(`diff old.json new.json; sed -i 's/a/b/' c.json`)?.seds, ['c.json'])
+check('sed sibling cp dest', parseBashEdit(`cp a.txt b.txt && sed -i 's/x/y/' a.txt`)?.seds, ['a.txt'])
+check('sed -i.bak', parseBashEdit(`sed -i.bak 's/a/b/' README.md`)?.seds, ['README.md'])
+
+// 14. Script literals: written files lead, reads and URLs do not lead.
+check('script: write-bound first', parseBashEdit(`python3 - <<'EOF'\nsrc = Path("input.md").read_text()\ndst = Path("output.md")\nold = '''alpha'''\nnew = '''beta'''\ndst.write_text(src.replace(old, new))\nEOF`)?.files, ['output.md'])
+check('script: url dropped', parseBashEdit(`python3 - <<'EOF'\np = Path("done.md")\nold = '''a'''\nnew = '''b'''\np.write_text(p.read_text().replace(old, new))\nwebbrowser.open("http://example.com/x.html")\nEOF`)?.files, ['done.md'])
+check('script: read-only literal kept', parseBashEdit(`python3 - <<'EOF'\np = pathlib.Path("CONTRIBUTING.md")\nold = '''a'''\nnew = '''b'''\ns = p.read_text(encoding="utf-8")\np.write_text(s.replace(old, new))\nEOF`)?.files, ['CONTRIBUTING.md'])
+// A renderer without a read idiom is not a replace-edit.
+check('generator: null', parseBashEdit(`python3 - <<'EOF'\nold = '''alpha'''\nnew = '''beta'''\nout = tpl.replace("{{v}}", old + new)\nPath("rendered.md").write_text(out)\nEOF`), null)
+
+// 15. CRLF commands parse without CR residue.
+check('crlf heredoc body', parseBashEdit(`cat > f.txt <<'EOF'\r\nline1\r\nEOF\r\n`)?.writes[0]?.body, 'line1\n')
 
 if (failed > 0) {
   console.error(`parse-bash self-check FAILED (${failed})`)
