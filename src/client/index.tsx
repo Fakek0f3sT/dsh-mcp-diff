@@ -805,17 +805,23 @@ function bashLines(edit: BashEdit): { lines: DiffLine[]; added: number; removed:
 }
 
 function bashKindBadge(edit: BashEdit): string {
-  if (edit.ops.length > 0) {
+  if (edit.ops.length > 0 && edit.pairs.length === 0 && edit.writes.length === 0 && edit.seds.length === 0) {
     const kinds = [...new Set(edit.ops.map((o) => o.op))].join('+')
     return `bash ${kinds}`
   }
+  // Write flavor: append vs overwrite is the one fact that changes how
+  // alarmed a reviewer should be before expanding the card.
+  const writeKind = edit.writes.length === 0 ? null
+    : edit.writes.every((w) => w.append) ? 'append'
+      : edit.writes.some((w) => w.append) ? 'write+append' : 'write'
   const kinds = [
     edit.pairs.length > 0 ? 'replace' : null,
-    edit.writes.length > 0 ? 'write' : null,
+    writeKind,
     edit.seds.length > 0 ? 'in-place' : null,
   ].filter((kind): kind is string => kind !== null)
+  const opsSuffix = edit.ops.length > 0 ? `+${[...new Set(edit.ops.map((o) => o.op))].join('+')}` : ''
   const files = edit.files.length > 1 ? ` · ${String(edit.files.length)} files` : ''
-  return `bash edit · ${kinds.join('+')}${files}`
+  return `bash edit · ${kinds.join('+')}${opsSuffix}${files}`
 }
 
 /** The bash-mutation card: intended diff from the command text, clearly badged
