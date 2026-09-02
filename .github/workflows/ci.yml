@@ -2,20 +2,29 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+# One queue per ref: a force-push supersedes the superseded run instead of
+# racing it for the same concurrency group.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # Pinned to SHAs (Dependabot keeps the pins updated): a moved tag must
+      # never be able to run code in CI.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@a15d269cd4658e1107c09f1fabf4cbd7bd1f308a # v4.4.0
         with:
           # matches the pnpm 11 line that produced pnpm-lock.yaml
           version: 11
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
