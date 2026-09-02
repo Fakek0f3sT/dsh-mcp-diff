@@ -35,6 +35,7 @@
  * type-only (it activates the `tool.call.toolview` SlotMap augmentation).
  */
 import type { ReactNode } from 'react'
+import { useMemo } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
 import { resolveWorkspacePath } from '@deepseek-ai/dsh-client-runtime/client'
@@ -178,6 +179,19 @@ function lcsLines(oldText: string, newText: string): { lines: DiffLine[]; added:
   const b = contentLines(newText)
   const n = a.length
   const m = b.length
+  // Past the table-size threshold the dp allocation would reach hundreds of MB
+  // on the GUI main thread; degenerate to del-all/add-all (context lost, the
+  // +N -M counts stay exact).
+  if (n * m > LCS_CELL_LIMIT) {
+    return {
+      lines: [
+        ...a.map((text): DiffLine => ({ kind: 'del', text })),
+        ...b.map((text): DiffLine => ({ kind: 'add', text })),
+      ],
+      added: m,
+      removed: n,
+    }
+  }
   // dp[i][j] = LCS length of a[i..] and b[j..].
   const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0))
   for (let i = n - 1; i >= 0; i--) {
@@ -199,6 +213,15 @@ function lcsLines(oldText: string, newText: string): { lines: DiffLine[]; added:
   for (; j < m; j++) { lines.push({ kind: 'add', text: b[j] }); added++ }
   return { lines, added, removed }
 }
+
+/** LCS dp cells above which a hunk pair degenerates to del-all/add-all:
+ * 1000 × 1000 lines — far above any real edit hunk, far below an OOM. */
+const LCS_CELL_LIMIT = 1_000_000
+
+/** Diff rows a card renders before the body footer truncates the rest. The
+ * card body scrolls at ~20 visible rows, so 400 keeps expansion and scrolling
+ * light no matter how large the diff is. */
+const MAX_RENDERED_ROWS = 400
 
 /** A diff-card render view carried on a settled or running tool block: the
  * built-in edit/write tools attach `card:'diff'` with contextual FileDiff
@@ -442,7 +465,7 @@ function UnifiedDiff({ path, lines, added, removed, badge, state, openPath, open
         maxHeight: 448,
         overflowY: 'auto',
       }}>
-        {lines.map((line, i) => (
+        {lines.slice(0, MAX_RENDERED_ROWS).map((line, i) => (
           <div key={i} style={{
             whiteSpace: 'pre',
             minHeight: 22,
@@ -456,6 +479,13 @@ function UnifiedDiff({ path, lines, added, removed, badge, state, openPath, open
             {SIGN[line.kind] + line.text}
           </div>
         ))}
+        {lines.length > MAX_RENDERED_ROWS && (
+          <div style={{
+            fontSize: 11,
+            color: 'var(--dsw-alias-label-tertiary)',
+            margin: '4px 0 0',
+          }}>{`+ ${String(lines.length - MAX_RENDERED_ROWS)} more lines not rendered`}</div>
+        )}
         {children}
       </div>
     </details>
@@ -873,7 +903,10 @@ function TerminalCard({ toolName, block, cwd, home, inspect, t }: McpDiffRowProp
  * render the whole row. */
 function BashRow(props: McpDiffRowProps) {
   const command = bashCommandOf(props.block)
-  const edit = command === null ? null : parseBashEdit(command)
+  // Memoized on the command text: the row re-renders on every streaming chunk
+  // of the call, and re-parsing a large command each time would burn the main
+  // thread for no new information.
+  const edit = useMemo(() => (command === null ? null : parseBashEdit(command)), [command])
   if (edit === null || command === null) return <TerminalCard {...props} />
   // Path ops (mv/cp/mkdir/rm/touch) render through the same card with zero
   // diff lines: the summary names the op, the body lists the paths.
