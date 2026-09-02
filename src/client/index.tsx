@@ -35,12 +35,13 @@
  * type-only (it activates the `tool.call.toolview` SlotMap augmentation).
  */
 import type { ReactNode } from 'react'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
 import { resolveWorkspacePath } from '@deepseek-ai/dsh-client-runtime/client'
 import {
-  IconApiOutline14, IconChevronDownOutline14, StateDot, TerminalBlock,
+  IconApiOutline14, IconCheckOutline16, IconChevronDownOutline14, IconCopyOutline16,
+  StateDot, TerminalBlock, writeClipboard,
   type TerminalBlockLabels, type TerminalBlockProps,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
@@ -366,6 +367,65 @@ const FILL: Record<DiffLineKind, string | undefined> = {
   ctx: undefined,
 }
 
+/** The server's fenced ```diff block with the fences stripped — a real,
+ * `git apply`-able patch (only offered for a settled `edit_file` whose result
+ * parsed as one). Null when the text carries no fenced diff. */
+function fencedDiffText(text: string): string | null {
+  const start = text.indexOf('```diff')
+  if (start === -1) return null
+  const bodyStart = text.indexOf('\n', start)
+  if (bodyStart === -1) return null
+  const end = text.indexOf('```', bodyStart)
+  if (end === -1) return null
+  return text.slice(bodyStart + 1, end)
+}
+
+/** One copy affordance: a ghost icon button with a transient copied state
+ * (check icon), wired to the primitives' clipboard channel. Copies on click,
+ * never on render. */
+function CopyButton({ getText, label }: { getText: () => string; label: string }): ReactNode {
+  const [copied, setCopied] = useState(false)
+  const copy = (): void => {
+    void writeClipboard(getText()).then((ok) => {
+      if (!ok) return
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1500)
+    })
+  }
+  return (
+    <button type="button" aria-label={label} title={label} onClick={copy} style={{
+      display: 'flex',
+      alignItems: 'center',
+      padding: '2px 6px',
+      font: 'inherit',
+      fontSize: 11,
+      color: copied ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-label-tertiary)',
+      background: 'transparent',
+      border: 'none',
+      borderRadius: 6,
+      cursor: 'pointer',
+    }}>{copied ? <IconCheckOutline16 size={14} /> : <IconCopyOutline16 size={14} />}</button>
+  )
+}
+
+/** Card action row: copy the diff as text, the command, or the real server
+ * patch when one exists. Rendered at the top of the card body — visible when
+ * expanded, off the <summary> toggle path. */
+function CardActions({ diff, patch, command }: {
+  diff: (() => string) | null
+  patch?: string | null
+  command?: string | null
+}): ReactNode {
+  if (diff === null && (patch === undefined || patch === null) && (command === undefined || command === null)) return null
+  return (
+    <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end', margin: '0 -14px 2px', padding: '0 14px' }}>
+      {command !== undefined && command !== null && <CopyButton getText={() => command} label="copy command" />}
+      {diff !== null && <CopyButton getText={diff} label="copy diff" />}
+      {patch !== undefined && patch !== null && <CopyButton getText={() => patch} label="copy patch (git apply)" />}
+    </div>
+  )
+}
+
 /** The summary path as an open-file affordance: a real button calling the
  * host's file opener (the same channel the native tool rows use — the host
  * resolves the path against the session workspace and opens it in the user's
@@ -387,7 +447,7 @@ function PathLink({ path, onOpen }: { path: string; onOpen: () => void }) {
  * the open/closed state (no JS) — `<summary>` shows the path + `+N -M` count and
  * toggles the diff body on click. `badge` annotates non-tool mutations (bash);
  * `children` render after the diff lines (command/output for bash cards). */
-function UnifiedDiff({ path, lines, added, removed, badge, state, openPath, openFile, children }: {
+function UnifiedDiff({ path, lines, added, removed, badge, state, openPath, openFile, copyPatch, copyCommand, children }: {
   path: string | null
   lines: DiffLine[]
   added: number
@@ -398,6 +458,10 @@ function UnifiedDiff({ path, lines, added, removed, badge, state, openPath, open
   /** The card's path spelled for the host opener, when it is openable. */
   openPath?: string | null
   openFile?: ((path: string) => void) | undefined
+  /** A real server patch (settled `edit_file`), fence-stripped. */
+  copyPatch?: string | null
+  /** The full bash command, for the command copy button. */
+  copyCommand?: string | null
   children?: ReactNode
 }) {
   return (
@@ -466,6 +530,13 @@ function UnifiedDiff({ path, lines, added, removed, badge, state, openPath, open
         maxHeight: 448,
         overflowY: 'auto',
       }}>
+        {(lines.length > 0 || (copyCommand !== undefined && copyCommand !== null)) && (
+          <CardActions
+            diff={lines.length > 0 ? () => lines.map((line) => SIGN[line.kind] + line.text).join('\n') : null}
+            patch={copyPatch}
+            command={copyCommand}
+          />
+        )}
         {lines.slice(0, MAX_RENDERED_ROWS).map((line, i) => (
           <div key={i} style={{
             whiteSpace: 'pre',
@@ -533,13 +604,13 @@ function McpDiffRow({ toolName, block, cwd, openFile }: McpDiffRowProps) {
     const view = viewFromNative(native)
     return <UnifiedDiff path={displayPath(native[0].path, cwd)} openPath={containedOpenPath(native[0].path, undefined, cwd)} openFile={openFile} lines={view.lines} added={view.added} removed={view.removed} state={rowState(block)} />
   }
-  const view = (toolName.endsWith('edit_file') ? parseServerDiff(resultTextOf(block)) : null)
-    ?? viewFromArgs(toolName, block)
+  const serverText = toolName.endsWith('edit_file') ? resultTextOf(block) : ''
+  const view = parseServerDiff(serverText) ?? viewFromArgs(toolName, block)
   if (view === null) {
     return <div style={{ opacity: 0.6, fontSize: 12 }}>{toolName}</div>
   }
   const argsPath = pathOf(block)
-  return <UnifiedDiff path={argsPath === null ? null : displayPath(argsPath, cwd)} openPath={argsPath === null ? null : containedOpenPath(argsPath, undefined, cwd)} openFile={openFile} lines={view.lines} added={view.added} removed={view.removed} state={rowState(block)} />
+  return <UnifiedDiff path={argsPath === null ? null : displayPath(argsPath, cwd)} openPath={argsPath === null ? null : containedOpenPath(argsPath, undefined, cwd)} openFile={openFile} lines={view.lines} added={view.added} removed={view.removed} state={rowState(block)} copyPatch={fencedDiffText(serverText)} />
 }
 
 /** The MCP filesystem `move_file` call as an informational card: a rename has
@@ -742,6 +813,7 @@ function BashEditCard({ edit, command, block, cwd, openFile, args }: { edit: Bas
       removed={view.removed}
       badge={bashKindBadge(edit)}
       state={state}
+      copyCommand={flatCommand}
     >
       {mixedWithOps && (
         <div style={{ fontSize: 11, color: 'var(--dsw-alias-state-error-primary)', margin: '6px 0 2px' }}>
