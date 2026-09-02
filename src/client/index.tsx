@@ -408,17 +408,42 @@ function CopyButton({ getText, label }: { getText: () => string; label: string }
   )
 }
 
+/** A small ghost text chip for card-body toggles (wrap, show-all) — the
+ * Inspect-button look, always off the <summary> toggle path. */
+function ToggleChip({ on, onClick, children }: {
+  on?: boolean
+  onClick: () => void
+  children: ReactNode
+}): ReactNode {
+  return (
+    <button type="button" onClick={onClick} style={{
+      padding: '2px 8px',
+      font: 'inherit',
+      fontSize: 11,
+      color: on === true ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-label-tertiary)',
+      background: 'transparent',
+      border: '1px solid var(--dsw-alias-label-tertiary)',
+      borderRadius: 8,
+      cursor: 'pointer',
+    }}>{children}</button>
+  )
+}
+
 /** Card action row: copy the diff as text, the command, or the real server
- * patch when one exists. Rendered at the top of the card body — visible when
- * expanded, off the <summary> toggle path. */
-function CardActions({ diff, patch, command }: {
+ * patch when one exists, plus view toggles on the left. Rendered at the top
+ * of the card body — visible when expanded, off the <summary> toggle path. */
+function CardActions({ diff, patch, command, left }: {
   diff: (() => string) | null
   patch?: string | null
   command?: string | null
+  left?: ReactNode
 }): ReactNode {
-  if (diff === null && (patch === undefined || patch === null) && (command === undefined || command === null)) return null
+  if (diff === null && (patch === undefined || patch === null) && (command === undefined || command === null) && left === undefined) return null
   return (
     <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end', margin: '0 -14px 2px', padding: '0 14px' }}>
+      {left !== undefined && (
+        <span style={{ display: 'flex', gap: 4, marginRight: 'auto' }}>{left}</span>
+      )}
       {command !== undefined && command !== null && <CopyButton getText={() => command} label="copy command" />}
       {diff !== null && <CopyButton getText={diff} label="copy diff" />}
       {patch !== undefined && patch !== null && <CopyButton getText={() => patch} label="copy patch (git apply)" />}
@@ -464,6 +489,13 @@ function UnifiedDiff({ path, lines, added, removed, badge, state, openPath, open
   copyCommand?: string | null
   children?: ReactNode
 }) {
+  // Per-card view state (persists across collapse/expand): wrap re-flows long
+  // lines; show-all lifts the render cap for THIS card only, by explicit
+  // click — the default stays capped.
+  const [wrap, setWrap] = useState(false)
+  const [renderAll, setRenderAll] = useState(false)
+  const truncated = !renderAll && lines.length > MAX_RENDERED_ROWS
+  const shown = renderAll ? lines : lines.slice(0, MAX_RENDERED_ROWS)
   return (
     <details data-state={state !== undefined ? state : undefined} style={{
       margin: '16px 0',
@@ -535,11 +567,22 @@ function UnifiedDiff({ path, lines, added, removed, badge, state, openPath, open
             diff={lines.length > 0 ? () => lines.map((line) => SIGN[line.kind] + line.text).join('\n') : null}
             patch={copyPatch}
             command={copyCommand}
+            left={
+              <>
+                {lines.length > MAX_RENDERED_ROWS && (
+                  <ToggleChip on={renderAll} onClick={() => setRenderAll((v) => !v)}>
+                    {renderAll ? 'collapse' : `show all ${String(lines.length)}`}
+                  </ToggleChip>
+                )}
+                <ToggleChip on={wrap} onClick={() => setWrap((v) => !v)}>wrap</ToggleChip>
+              </>
+            }
           />
         )}
-        {lines.slice(0, MAX_RENDERED_ROWS).map((line, i) => (
+        {shown.map((line, i) => (
           <div key={i} style={{
-            whiteSpace: 'pre',
+            whiteSpace: wrap ? 'pre-wrap' : 'pre',
+            wordBreak: wrap ? 'break-all' : undefined,
             minHeight: 22,
             color: COLOR[line.kind],
             background: FILL[line.kind],
@@ -551,7 +594,7 @@ function UnifiedDiff({ path, lines, added, removed, badge, state, openPath, open
             {SIGN[line.kind] + line.text}
           </div>
         ))}
-        {lines.length > MAX_RENDERED_ROWS && (
+        {truncated && (
           <div style={{
             fontSize: 11,
             color: 'var(--dsw-alias-label-tertiary)',
